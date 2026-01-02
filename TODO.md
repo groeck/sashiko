@@ -19,7 +19,7 @@
 - [x] **Task**: Add configuration option to disable NNTP and use local archives.
 - [x] Implement patchset assembly (handling multi-part messages).
 
-## Phase 3: AI Logic & Interaction Tracking
+## Phase 3: AI Logic & Interaction Tracking (Deferred)
 - [ ] Implement model-agnostic AI provider abstraction.
 - [ ] Set up `ai_interactions` table and workflow engine for chain restoration.
 - [ ] Integrate with `review-prompts` repository logic.
