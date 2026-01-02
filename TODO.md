@@ -14,6 +14,9 @@
 - [x] Develop baseline detection logic (explicit and heuristic).
 - [x] Set up sandboxed `git am` environment.
 - [ ] Implement Worktree Garbage Collector (pruning & disk limits).
+- [ ] **Task**: Download `lore.kernel.org` git archive (e.g., 2025 emails) for offline testing.
+- [ ] **Task**: Implement file-based/git-based ingestor to process downloaded archives.
+- [ ] **Task**: Add configuration option to disable NNTP and use local archives.
 - [ ] Implement patchset assembly (handling multi-part messages).
 
 ## Phase 3: AI Logic & Interaction Tracking

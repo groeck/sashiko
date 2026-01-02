@@ -8,7 +8,9 @@ Sashiko follows a modular, single-node architecture designed for high concurrenc
 
 ### 1.1. High-Level Component Flow
 
-1.  **NNTP Ingestor**: Continuously polls `nntp.lore.kernel.org`.
+1.  **Ingestor**:
+    *   **Live Mode**: Continuously polls `nntp.lore.kernel.org` via NNTP.
+    *   **Offline/Test Mode**: Reads from a local `git` clone of `lore.kernel.org` archives (bulk import).
 2.  **Internal Task Queue**: Uses `tokio::sync::mpsc` channels to pass metadata to workers.
 3.  **Patch Worker**:
     *   Parses emails into `Patch` and `Patchset` structures.
@@ -99,6 +101,7 @@ Sashiko integrates with the AI Review Engine using prompts managed in the [revie
 ## 8. Configuration & Resource Management
 
 *   **Configuration**: All system parameters (API keys, paths, limits) are managed via the `config` crate, supporting environment variables and `Settings.toml` files.
+    *   **Ingestion Source**: Switch between `NNTP` (live) and `LocalArchive` (filesystem/git) for testing and development.
 *   **Git Cleanup**: To prevent disk exhaustion, the Patch Worker implements a "Worktree Garbage Collector" that:
     *   Prunes worktrees immediately after use.
     *   Periodically runs `git gc` on the reference repository.
