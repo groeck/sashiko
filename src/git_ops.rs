@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tokio::process::Command;
@@ -123,16 +123,15 @@ pub async fn prune_worktrees(repo_path: &Path) -> Result<()> {
 
 #[allow(dead_code)]
 pub async fn check_disk_usage(path: &Path) -> Result<String> {
-    let output = Command::new("du")
-        .arg("-sh")
-        .arg(path)
-        .output()
-        .await?;
-    
+    let output = Command::new("du").arg("-sh").arg(path).output().await?;
+
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(anyhow!("Failed to check disk usage: {}", String::from_utf8_lossy(&output.stderr)))
+        Err(anyhow!(
+            "Failed to check disk usage: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
     }
 }
 

@@ -1,10 +1,10 @@
 use crate::db::Database;
 use crate::settings::ServerSettings;
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     routing::{get, get_service},
-    Json, Router,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -16,7 +16,10 @@ pub struct AppState {
     pub db: Arc<Database>,
 }
 
-pub async fn run_server(settings: ServerSettings, db: Arc<Database>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_server(
+    settings: ServerSettings,
+    db: Arc<Database>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState { db });
 
     let app = Router::new()
@@ -28,7 +31,7 @@ pub async fn run_server(settings: ServerSettings, db: Arc<Database>) -> Result<(
 
     let addr = SocketAddr::from(([0, 0, 0, 0], settings.port));
     info!("Web API listening on {}", addr);
-    
+
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 
