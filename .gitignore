@@ -1,6 +1,7 @@
 /target
 Cargo.lock
-**/*.rs.bk*.db
+**/*.rs.bk
+*.db
 *.db-journal
 *.db-wal
 *.db-shm

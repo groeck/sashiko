@@ -5,7 +5,7 @@
 - [x] Set up `config` crate for environment/file-based configuration.
 - [x] Implement NNTP Ingestor (polling `nntp.lore.kernel.org`).
 - [x] Set up libSQL/Turso schema for mailing lists and patchsets.
-- [ ] Implement internal task queue (tokio channels).
+- [x] Implement internal task queue (tokio channels).
 - [ ] Implement article state tracking (high-water mark).
 - [ ] Set up structured logging (`tracing`) and observability baseline.
 

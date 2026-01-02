@@ -1,18 +1,25 @@
 use crate::db::Database;
+use crate::events::Event;
 use crate::nntp::NntpClient;
 use crate::settings::NntpSettings;
 use anyhow::Result;
+use tokio::sync::mpsc::Sender;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
 pub struct Ingestor {
     settings: NntpSettings,
     db: Database,
+    sender: Sender<Event>,
 }
 
 impl Ingestor {
-    pub fn new(settings: NntpSettings, db: Database) -> Self {
-        Self { settings, db }
+    pub fn new(settings: NntpSettings, db: Database, sender: Sender<Event>) -> Self {
+        Self {
+            settings,
+            db,
+            sender,
+        }
     }
 
     pub async fn run(&self) -> Result<()> {
