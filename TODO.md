@@ -20,6 +20,7 @@
 - [x] **Task**: Add configuration option to disable NNTP and use local archives.
 - [x] **Task**: Implement automatic git archive bootstrapping with `--n-last`.
 - [x] Implement patchset assembly (handling multi-part messages).
+- [ ] Support parsing patches from email attachments.
 
 ## Phase 3: AI Logic & Interaction Tracking (Deferred)
 - [ ] Implement model-agnostic AI provider abstraction.
