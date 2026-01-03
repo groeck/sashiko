@@ -38,6 +38,16 @@ impl Database {
     pub async fn migrate(&self) -> Result<()> {
         let schema = include_str!("schema.sql");
         self.conn.execute_batch(schema).await?;
+
+        // Idempotent migration for parser_version
+        let _ = self
+            .conn
+            .execute(
+                "ALTER TABLE patchsets ADD COLUMN parser_version INTEGER DEFAULT 0",
+                libsql::params![],
+            )
+            .await;
+
         info!("Database schema applied");
         Ok(())
     }
@@ -79,6 +89,23 @@ impl Database {
         Ok(())
     }
 
+    pub async fn get_patchset_version(&self, message_id: &str) -> Result<Option<i32>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT parser_version FROM patchsets WHERE message_id = ?",
+                libsql::params![message_id],
+            )
+            .await?;
+
+        if let Ok(Some(row)) = rows.next().await {
+            let ver: Option<i32> = row.get(0).ok();
+            Ok(ver)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn create_patchset(
         &self,
         message_id: &str,
@@ -86,25 +113,35 @@ impl Database {
         author: &str,
         date: i64,
         total_parts: u32,
+        parser_version: i32,
     ) -> Result<i64> {
         self.conn
             .execute(
-                "INSERT INTO patchsets (message_id, subject, author, date, total_parts, received_parts, status) 
-                 VALUES (?, ?, ?, ?, ?, 1, 'Pending') 
+                "INSERT INTO patchsets (message_id, subject, author, date, total_parts, received_parts, status, parser_version) 
+                 VALUES (?, ?, ?, ?, ?, 1, 'Pending', ?) 
                  ON CONFLICT(message_id) DO UPDATE SET 
                     author = excluded.author,
                     subject = excluded.subject,
-                    date = excluded.date",
-                libsql::params![message_id, subject, author, date, total_parts],
+                    date = excluded.date,
+                    parser_version = excluded.parser_version",
+                libsql::params![message_id, subject, author, date, total_parts, parser_version],
             )
             .await?;
-        
-        let mut rows = self.conn.query("SELECT id FROM patchsets WHERE message_id = ?", libsql::params![message_id]).await?;
+
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id FROM patchsets WHERE message_id = ?",
+                libsql::params![message_id],
+            )
+            .await?;
         if let Ok(Some(row)) = rows.next().await {
             let id: i64 = row.get(0)?;
             Ok(id)
         } else {
-            Err(anyhow::anyhow!("Failed to retrieve patchset ID after insert"))
+            Err(anyhow::anyhow!(
+                "Failed to retrieve patchset ID after insert"
+            ))
         }
     }
 

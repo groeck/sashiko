@@ -31,6 +31,8 @@ struct Cli {
     no_nntp: bool,
 }
 
+const PARSER_VERSION: i32 = 1;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
@@ -82,6 +84,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match crate::patch::parse_email(&raw_bytes) {
                         Ok((metadata, patch_opt)) => {
+                            // Check version to decide whether to skip or update
+                            match worker_db.get_patchset_version(&metadata.message_id).await {
+                                Ok(Some(ver)) if ver >= PARSER_VERSION => {
+                                    info!("Skipping up-to-date message: {}", metadata.message_id);
+                                    continue;
+                                }
+                                Ok(Some(_)) => {
+                                    info!("Updating outdated message: {}", metadata.message_id);
+                                }
+                                _ => {} // New message
+                            }
+
                             let subject = if metadata.subject.len() > 80 {
                                 format!("{}...", &metadata.subject[..77])
                             } else {
@@ -93,12 +107,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 group, article_id, metadata.author, subject
                             );
 
-                            match worker_db.create_patchset(
+                            match worker_db
+                                .create_patchset(
                                     &metadata.message_id,
                                     &metadata.subject,
                                     &metadata.author,
                                     metadata.date,
                                     metadata.total,
+                                    PARSER_VERSION,
                                 )
                                 .await
                             {

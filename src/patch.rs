@@ -112,3 +112,21 @@ fn parse_subject_index(subject: &str) -> (u32, u32) {
         (1, 1)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_author_parsing() {
+        let raw =
+            b"Message-ID: <123>\r\nFrom: Test User <test@example.com>\r\nSubject: Test\r\n\r\nBody";
+        let (meta, _) = parse_email(raw).unwrap();
+        assert_eq!(meta.author, "Test User <test@example.com>");
+
+        let raw_no_name =
+            b"Message-ID: <456>\r\nFrom: test2@example.com\r\nSubject: Test\r\n\r\nBody";
+        let (meta2, _) = parse_email(raw_no_name).unwrap();
+        assert_eq!(meta2.author, "test2@example.com");
+    }
+}

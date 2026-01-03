@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS patchsets (
     date INTEGER,
     total_parts INTEGER,
     received_parts INTEGER,
-    status TEXT DEFAULT 'Pending' -- Pending, Assembled, Applied, Failed, Reviewed
+    status TEXT DEFAULT 'Pending', -- Pending, Assembled, Applied, Failed, Reviewed
+    parser_version INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_patchsets_date ON patchsets(date);
