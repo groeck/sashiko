@@ -266,7 +266,12 @@ impl Database {
             // Since we don't have fuzzy match handy, let's use:
             // If total=1, assume disjoint unless subjects are identical (simplified).
             let subject_match = if is_singleton {
-                subject == existing_subject
+                if subject == existing_subject {
+                    true
+                } else {
+                     // Allow merging 0/1 (cover) and 1/1 (patch) even if subjects differ
+                     (part_index == 0 && existing_subject_index == 1) || (part_index == 1 && existing_subject_index == 0)
+                }
             } else {
                 true // For series, we rely on 1/N, 2/N pattern and author/time.
             };
@@ -780,6 +785,27 @@ mod tests {
         ).await.unwrap().unwrap();
 
         assert_ne!(ps_a, ps_b, "Should NOT merge unrelated singletons even if author/time match");
+    }
+
+    #[tokio::test]
+    async fn test_singleton_cover_patch_merge() {
+        let db = setup_db().await;
+        let thread_id = db.create_thread("root_1of1", "Singleton Series", 60000).await.unwrap();
+        let author = "Author 1of1 <1@example.com>";
+
+        // Cover: [PATCH 0/1] Subject A
+        db.create_message("msg_0", thread_id, None, author, "[PATCH 0/1] Subject A", 60000, "").await.unwrap();
+        let ps_0 = db.create_patchset(
+            thread_id, Some("msg_0"), "[PATCH 0/1] Subject A", author, 60000, 1, 1, "", "", None, None, 0
+        ).await.unwrap().unwrap();
+
+        // Patch: [PATCH 1/1] Subject B (Different subject)
+        db.create_message("msg_1", thread_id, None, author, "[PATCH 1/1] Subject B", 60005, "").await.unwrap();
+        let ps_1 = db.create_patchset(
+            thread_id, None, "[PATCH 1/1] Subject B", author, 60005, 1, 1, "", "", None, None, 1
+        ).await.unwrap().unwrap();
+
+        assert_eq!(ps_0, ps_1, "Should merge 0/1 and 1/1 even if subjects differ");
     }
 
     #[tokio::test]
