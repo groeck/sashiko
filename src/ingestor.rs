@@ -65,7 +65,7 @@ impl Ingestor {
 
                     if let Err(e) = self.bootstrap_repo(&url, &path, n).await {
                         error!("Failed to bootstrap group {}: {}", group, e);
-                    } else if let Err(e) = self.ingest_git_objects(&path, Some(n)).await {
+                    } else if let Err(e) = self.ingest_git_objects(group, &path, Some(n)).await {
                         error!("Failed to ingest objects for group {}: {}", group, e);
                     }
                 }
@@ -305,7 +305,12 @@ impl Ingestor {
         Ok(())
     }
 
-    async fn ingest_git_objects(&self, path: &std::path::Path, limit: Option<usize>) -> Result<()> {
+    async fn ingest_git_objects(
+        &self,
+        group_name: &str,
+        path: &std::path::Path,
+        limit: Option<usize>,
+    ) -> Result<()> {
         info!("Starting Git Ingestion from {:?}", path);
 
         // 1. Get list of all object SHAs
@@ -399,7 +404,7 @@ impl Ingestor {
 
                 self.sender
                     .send(Event::ArticleFetched {
-                        group: "git-archive".to_string(),
+                        group: group_name.to_string(),
                         article_id: hash.clone(),
                         content: lines,
                         raw: Some(content),

@@ -123,7 +123,19 @@ async fn get_message(
     info!("Fetching details for message id: {}", id_val);
 
     match state.db.get_message_details(id_val).await {
-        Ok(Some(details)) => Ok(Json(details)),
+        Ok(Some(mut details)) => {
+            if details.body.is_none() || details.body.as_deref() == Some("") {
+                if let (Some(hash), Some(group)) = (&details.git_blob_hash, &details.mailing_list) {
+                    let repo_path = std::path::PathBuf::from("archives").join(group);
+                    if let Ok(raw) = crate::git_ops::read_blob(&repo_path, hash).await {
+                        if let Ok((metadata, _)) = crate::patch::parse_email(&raw) {
+                            details.body = Some(metadata.body);
+                        }
+                    }
+                }
+            }
+            Ok(Json(details))
+        }
         Ok(None) => {
             info!("Message not found: {}", id_val);
             Err(StatusCode::NOT_FOUND)

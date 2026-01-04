@@ -41,12 +41,14 @@ pub struct MessageRow {
     pub to: Option<String>,
     pub cc: Option<String>,
     pub thread: Option<Vec<serde_json::Value>>,
+    pub git_blob_hash: Option<String>,
+    pub mailing_list: Option<String>,
 }
 
 impl Database {
     pub async fn get_message_details(&self, id: i64) -> Result<Option<MessageRow>> {
         let mut rows = self.conn.query(
-            "SELECT id, message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients FROM messages WHERE id = ?",
+            "SELECT id, message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients, git_blob_hash, mailing_list FROM messages WHERE id = ?",
              libsql::params![id],
         ).await?;
 
@@ -83,6 +85,8 @@ impl Database {
                 body: row.get(7).ok(),
                 to: row.get(8).ok(),
                 cc: row.get(9).ok(),
+                git_blob_hash: row.get(10).ok(),
+                mailing_list: row.get(11).ok(),
                 thread: Some(messages),
             }))
         } else {
@@ -116,6 +120,12 @@ impl Database {
             .await;
         let _ = self
             .try_add_column("messages", "cc_recipients", "TEXT")
+            .await;
+        let _ = self
+            .try_add_column("messages", "git_blob_hash", "TEXT")
+            .await;
+        let _ = self
+            .try_add_column("messages", "mailing_list", "TEXT")
             .await;
 
         info!("Database schema applied");
@@ -395,6 +405,8 @@ impl Database {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await?;
 
@@ -413,6 +425,8 @@ impl Database {
         body: &str,
         to: &str,
         cc: &str,
+        git_blob_hash: Option<&str>,
+        mailing_list: Option<&str>,
     ) -> Result<()> {
         // Use INSERT OR REPLACE to handle updating placeholders
         // But we want to preserve thread_id if it was set by placeholder (which is correct).
@@ -426,8 +440,8 @@ impl Database {
         // But main.rs logic should ensure consistency.
         // Let's use INSERT OR REPLACE.
         self.conn.execute(
-            "INSERT OR REPLACE INTO messages (message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            libsql::params![message_id, thread_id, in_reply_to, author, subject, date, body, to, cc],
+            "INSERT OR REPLACE INTO messages (message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients, git_blob_hash, mailing_list) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            libsql::params![message_id, thread_id, in_reply_to, author, subject, date, body, to, cc, git_blob_hash, mailing_list],
         ).await?;
         Ok(())
     }
@@ -888,7 +902,7 @@ mod tests {
 
         // 1. Create first patchset from Patch 1 (index 1)
         db.create_message(
-            "msg1", thread_id, None, "Author A", "Patch 1", 1000, "", "", "",
+            "msg1", thread_id, None, "Author A", "Patch 1", 1000, "", "", "", None, None,
         )
         .await
         .unwrap();
@@ -923,6 +937,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -951,7 +967,7 @@ mod tests {
         // 3. Add Patch 2 (index 2)
         // Should NOT update subject (index 2 > index 0)
         db.create_message(
-            "msg2", thread_id, None, "Author A", "Patch 2", 1006, "", "", "",
+            "msg2", thread_id, None, "Author A", "Patch 2", 1006, "", "", "", None, None,
         )
         .await
         .unwrap();
@@ -1027,9 +1043,11 @@ mod tests {
             .unwrap();
 
         // PS A (Time 10000)
-        db.create_message("m1", t_merge, None, "Merger", "P1", 10000, "", "", "")
-            .await
-            .unwrap();
+        db.create_message(
+            "m1", t_merge, None, "Merger", "P1", 10000, "", "", "", None, None,
+        )
+        .await
+        .unwrap();
         let psa = db
             .create_patchset(
                 t_merge,
@@ -1050,9 +1068,11 @@ mod tests {
             .unwrap();
 
         // PS B (Time 200000) - 190000s diff > 86400s limit -> New PS
-        db.create_message("m2", t_merge, None, "Merger", "P3", 200000, "", "", "")
-            .await
-            .unwrap();
+        db.create_message(
+            "m2", t_merge, None, "Merger", "P3", 200000, "", "", "", None, None,
+        )
+        .await
+        .unwrap();
         let psb = db
             .create_patchset(
                 t_merge,
@@ -1089,7 +1109,7 @@ mod tests {
         // So C bridges A and B.
 
         db.create_message(
-            "m2_fixed", t_merge, None, "Merger", "P3_fixed", 120000, "", "", "",
+            "m2_fixed", t_merge, None, "Merger", "P3_fixed", 120000, "", "", "", None, None,
         )
         .await
         .unwrap(); // 120000. Diff 110000 > 86400.
@@ -1116,9 +1136,11 @@ mod tests {
         // PS C (Time 65000)
         // Diff(A, C) = 55000 < 86400.
         // Diff(B, C) = 120000 - 65000 = 55000 < 86400.
-        db.create_message("m3", t_merge, None, "Merger", "P2", 65000, "", "", "")
-            .await
-            .unwrap();
+        db.create_message(
+            "m3", t_merge, None, "Merger", "P2", 65000, "", "", "", None, None,
+        )
+        .await
+        .unwrap();
         let psc = db
             .create_patchset(
                 t_merge,
@@ -1159,9 +1181,11 @@ mod tests {
             let subject = format!("[PATCH {}/5] Feature part {}", idx, idx);
             let time = 20000 + (i as i64 * 10); // 10s apart
 
-            db.create_message(&msg_id, thread_id, None, author, &subject, time, "", "", "")
-                .await
-                .unwrap();
+            db.create_message(
+                &msg_id, thread_id, None, author, &subject, time, "", "", "", None, None,
+            )
+            .await
+            .unwrap();
             let ps_id = db
                 .create_patchset(
                     thread_id,
@@ -1238,7 +1262,7 @@ mod tests {
 
         // 2. Add Patch 1. received=1. Total=2. Status should be Incomplete.
         db.create_message(
-            "msg_1", thread_id, None, author, "Part 1", 60005, "", "", "",
+            "msg_1", thread_id, None, author, "Part 1", 60005, "", "", "", None, None,
         )
         .await
         .unwrap();
@@ -1248,7 +1272,7 @@ mod tests {
 
         // 3. Add Patch 2. received=2. Total=2. Status should transition to Pending.
         db.create_message(
-            "msg_2", thread_id, None, author, "Part 2", 60010, "", "", "",
+            "msg_2", thread_id, None, author, "Part 2", 60010, "", "", "", None, None,
         )
         .await
         .unwrap();
@@ -1283,6 +1307,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1316,6 +1342,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1366,6 +1394,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1399,6 +1429,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1447,6 +1479,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1480,6 +1514,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1528,6 +1564,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1561,6 +1599,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1609,6 +1649,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1642,6 +1684,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1675,6 +1719,8 @@ mod tests {
             "",
             "",
             "",
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1730,9 +1776,11 @@ mod tests {
         );
 
         // Message
-        db.create_message("msg1", thread_id, None, "Me", "Sub", 1000, "", "", "")
-            .await
-            .unwrap();
+        db.create_message(
+            "msg1", thread_id, None, "Me", "Sub", 1000, "", "", "", None, None,
+        )
+        .await
+        .unwrap();
         let msg_db_id = db.get_message_id_by_msg_id("msg1").await.unwrap().unwrap();
         db.add_tag_to_message(msg_db_id, tag_id).await.unwrap();
 

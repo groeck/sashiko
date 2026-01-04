@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS messages (
     body TEXT,
     to_recipients TEXT,
     cc_recipients TEXT,
+    git_blob_hash TEXT,
+    mailing_list TEXT,
     FOREIGN KEY(thread_id) REFERENCES threads(id)
 );
 

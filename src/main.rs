@@ -225,6 +225,13 @@ async fn process_parsed_article(worker_db: &Database, article: ParsedArticle) {
         }
     };
 
+    let is_git_hash = article_id.len() == 40 && article_id.chars().all(|c| c.is_ascii_hexdigit());
+    let (body_to_store, git_hash_opt) = if is_git_hash {
+        ("", Some(article_id.as_str()))
+    } else {
+        (metadata.body.as_str(), None)
+    };
+
     // 2. Create Message
     if let Err(e) = worker_db
         .create_message(
@@ -234,9 +241,11 @@ async fn process_parsed_article(worker_db: &Database, article: ParsedArticle) {
             &metadata.author,
             &metadata.subject,
             metadata.date,
-            &metadata.body,
+            body_to_store,
             &metadata.to,
             &metadata.cc,
+            git_hash_opt,
+            Some(&group),
         )
         .await
     {

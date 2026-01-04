@@ -103,6 +103,25 @@ impl GitWorktree {
 }
 
 #[allow(dead_code)]
+pub async fn read_blob(repo_path: &Path, hash: &str) -> Result<Vec<u8>> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .arg("cat-file")
+        .arg("-p")
+        .arg(hash)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git cat-file failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output.stdout)
+}
+
+#[allow(dead_code)]
 pub async fn prune_worktrees(repo_path: &Path) -> Result<()> {
     info!("Pruning git worktrees in {:?}", repo_path);
     let output = Command::new("git")
