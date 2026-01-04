@@ -126,6 +126,72 @@ impl Database {
         Ok(())
     }
 
+    // Tags
+    #[allow(dead_code)]
+    pub async fn ensure_tag(&self, name: &str) -> Result<i64> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO tags (name) VALUES (?)",
+                libsql::params![name],
+            )
+            .await?;
+
+        let mut rows = self
+            .conn
+            .query("SELECT id FROM tags WHERE name = ?", libsql::params![name])
+            .await?;
+
+        if let Ok(Some(row)) = rows.next().await {
+            Ok(row.get(0)?)
+        } else {
+            Err(anyhow::anyhow!("Failed to ensure tag"))
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn add_tag_to_message(&self, message_id: i64, tag_id: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO messages_tags (message_id, tag_id) VALUES (?, ?)",
+                libsql::params![message_id, tag_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub async fn add_tag_to_thread(&self, thread_id: i64, tag_id: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO threads_tags (thread_id, tag_id) VALUES (?, ?)",
+                libsql::params![thread_id, tag_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub async fn add_tag_to_patch(&self, patch_id: i64, tag_id: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO patches_tags (patch_id, tag_id) VALUES (?, ?)",
+                libsql::params![patch_id, tag_id],
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub async fn add_tag_to_patchset(&self, patchset_id: i64, tag_id: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO patchsets_tags (patchset_id, tag_id) VALUES (?, ?)",
+                libsql::params![patchset_id, tag_id],
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_message_id_by_msg_id(&self, msg_id: &str) -> Result<Option<i64>> {
         let mut rows = self
             .conn
@@ -1469,5 +1535,97 @@ mod tests {
 
         assert_eq!(ps_0, ps_1, "Patch 1 should merge with Cover");
         assert_eq!(ps_0, ps_2, "Patch 2 should merge with Cover");
+    }
+
+    #[tokio::test]
+    async fn test_tagging() {
+        let db = setup_db().await;
+        let tag_id = db.ensure_tag("important").await.unwrap();
+        assert!(tag_id > 0);
+
+        // Ensure idempotency
+        let tag_id_2 = db.ensure_tag("important").await.unwrap();
+        assert_eq!(tag_id, tag_id_2);
+
+        // Thread
+        let thread_id = db.create_thread("root", "Thread", 1000).await.unwrap();
+        db.add_tag_to_thread(thread_id, tag_id).await.unwrap();
+
+        // Verify Thread Tag
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT tag_id FROM threads_tags WHERE thread_id = ?",
+                libsql::params![thread_id],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            tag_id
+        );
+
+        // Message
+        db.create_message("msg1", thread_id, None, "Me", "Sub", 1000, "")
+            .await
+            .unwrap();
+        let msg_db_id = db.get_message_id_by_msg_id("msg1").await.unwrap().unwrap();
+        db.add_tag_to_message(msg_db_id, tag_id).await.unwrap();
+
+        // Verify Message Tag
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT tag_id FROM messages_tags WHERE message_id = ?",
+                libsql::params![msg_db_id],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            tag_id
+        );
+
+        // Patchset
+        let ps_id = db
+            .create_patchset(
+                thread_id, None, "PS", "Me", 1000, 1, 1, "", "", None, None, 1,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        db.add_tag_to_patchset(ps_id, tag_id).await.unwrap();
+
+        // Verify Patchset Tag
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT tag_id FROM patchsets_tags WHERE patchset_id = ?",
+                libsql::params![ps_id],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            tag_id
+        );
+
+        // Patch
+        let p_id = db.create_patch(ps_id, "msg1", 1, "").await.unwrap();
+        db.add_tag_to_patch(p_id, tag_id).await.unwrap();
+
+        // Verify Patch Tag
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT tag_id FROM patches_tags WHERE patch_id = ?",
+                libsql::params![p_id],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            tag_id
+        );
     }
 }
