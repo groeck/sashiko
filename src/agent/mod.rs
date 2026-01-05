@@ -51,7 +51,8 @@ impl Agent {
              Subject: {}\n\
              Author: {}\n\n\
              ## Review Protocol (review-core.md)\n\
-             {}",
+             {}\n\n\
+             IMPORTANT: If you find regressions, you MUST use the `write_file` tool to create `review-inline.txt` as specified in the protocol. Do not output the detailed inline review content in the final JSON response findings; use the file for that. The JSON output is for the summary, score, and structured findings.",
             patchset["subject"].as_str().unwrap_or("Unknown"),
             patchset["author"].as_str().unwrap_or("Unknown"),
             review_core
