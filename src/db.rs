@@ -1053,6 +1053,21 @@ impl Database {
             Ok(None)
         }
     }
+
+    pub async fn get_patch_diffs(&self, patchset_id: i64) -> Result<Vec<(i64, String)>> {
+        let mut rows = self.conn.query(
+            "SELECT part_index, diff FROM patches WHERE patchset_id = ? ORDER BY part_index ASC",
+            libsql::params![patchset_id]
+        ).await?;
+
+        let mut diffs = Vec::new();
+        while let Ok(Some(row)) = rows.next().await {
+            let index: i64 = row.get(0).unwrap_or(0);
+            let diff: String = row.get(1)?;
+            diffs.push((index, diff));
+        }
+        Ok(diffs)
+    }
 }
 
 #[cfg(test)]

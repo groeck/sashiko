@@ -33,11 +33,18 @@ pub struct ServerSettings {
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
+pub struct GitSettings {
+    pub repository_path: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
 pub struct Settings {
     pub database: DatabaseSettings,
     pub nntp: NntpSettings,
     pub ai: AiSettings,
     pub server: ServerSettings,
+    pub git: GitSettings,
 }
 
 impl Settings {

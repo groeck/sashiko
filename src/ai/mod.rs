@@ -88,3 +88,4 @@ impl AiProvider for OpenAiProvider {
         })
     }
 }
+pub mod gemini;

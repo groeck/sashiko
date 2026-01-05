@@ -84,6 +84,37 @@ impl GitWorktree {
     }
 
     #[allow(dead_code)]
+    pub async fn apply_raw_diff(&self, diff_content: &str) -> Result<()> {
+        info!("Applying raw diff in {:?}", self.path);
+
+        let mut child = Command::new("git")
+            .current_dir(&self.path)
+            .args(["-c", "safe.bareRepository=all"])
+            .arg("apply")
+            .arg("-") // Read from stdin
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin.write_all(diff_content.as_bytes()).await?;
+        }
+
+        let output = child.wait_with_output().await?;
+
+        if !output.status.success() {
+             return Err(anyhow!(
+                "git apply failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
     pub async fn remove(self) -> Result<()> {
         info!("Removing worktree at {:?}", self.path);
         let output = Command::new("git")

@@ -15,3 +15,6 @@ api_key = "your-api-key"
 [server]
 host = "127.0.0.1"
 port = 8080
+
+[git]
+repository_path = "."

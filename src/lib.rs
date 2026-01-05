@@ -9,3 +9,4 @@ pub mod inspector;
 pub mod nntp;
 pub mod patch;
 pub mod settings;
+pub mod agent;
