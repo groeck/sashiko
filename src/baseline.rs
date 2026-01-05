@@ -400,4 +400,21 @@ mod tests {
             _ => panic!("Expected RemoteTarget net-next"),
         }
     }
+
+    #[test]
+    fn test_parse_maintainers_with_comments() {
+        let content = "
+SUBSYSTEM
+T: git git://example.com/repo.git branch (comment)
+F: patterns/
+";
+        let reader = std::io::Cursor::new(content);
+        let entries = BaselineRegistry::parse_maintainers(reader).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].subsystem, "SUBSYSTEM");
+        assert_eq!(entries[0].trees.len(), 1);
+        assert_eq!(entries[0].trees[0].0, "git://example.com/repo.git");
+        assert_eq!(entries[0].trees[0].1, Some("branch".to_string()));
+    }
 }
