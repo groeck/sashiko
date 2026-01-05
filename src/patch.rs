@@ -168,26 +168,26 @@ fn parse_subject_index(subject: &str) -> (u32, u32) {
 
 pub fn parse_subject_version(subject: &str) -> Option<u32> {
     static RE_VER: OnceLock<Regex> = OnceLock::new();
-    // Match version patterns like:
-    // - [PATCH v2] ... (Standard)
-    // - [PATCH V2] ... (Uppercase)
-    // - [PATCHv2] ... (Attached)
-    // - [RFC v2] ... (RFC)
-    // - v3 PATCH ... (Start)
-    // - ... v4] (End)
-    // Avoid false positives like "dev" or "device".
     // Strategy:
-    // Prefix: Start of string (^), non-alphanumeric char ([^a-z0-9]), or literal "PATCH" (for PATCHvN)
-    // Body: v or V followed by digits
-    // Suffix: End of string ($) or non-alphanumeric char
-    let re = RE_VER
-        .get_or_init(|| Regex::new(r"(?i)(?:^|[^a-z0-9]|PATCH)v(\d+)(?:[^a-z0-9]|$)").unwrap());
+    // 1. Inside [...] blocks: find vN preceded by word boundary (e.g. [PATCH v2], [v2])
+    // 2. Start of string: ^vN followed by word boundary
+    // 3. Following PATCH: PATCH followed by non-word chars and vN (e.g. PATCHv2, [PATCH] v2)
+    let re = RE_VER.get_or_init(|| {
+        Regex::new(r"(?i)(?:\[[^\]]*?\bv(\d+)\b[^\]]*?\]|^\s*v(\d+)\b|PATCH\W*v(\d+)\b)").unwrap()
+    });
 
     if let Some(caps) = re.captures(subject) {
-        caps.get(1).and_then(|m| m.as_str().parse().ok())
-    } else {
-        None
+        if let Some(m) = caps.get(1) {
+            return m.as_str().parse().ok();
+        }
+        if let Some(m) = caps.get(2) {
+            return m.as_str().parse().ok();
+        }
+        if let Some(m) = caps.get(3) {
+            return m.as_str().parse().ok();
+        }
     }
+    None
 }
 
 #[cfg(test)]
@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(parse_subject_version("[PATCH] subject"), None); // v1 implicit
         assert_eq!(parse_subject_version("[RFC v4] subject"), Some(4));
         assert_eq!(parse_subject_version("[PATCH -v2] subject"), Some(2));
-        assert_eq!(parse_subject_version("Subject with v2 inside"), Some(2));
+        assert_eq!(parse_subject_version("Subject with v2 inside"), None); // v2 ignored
         assert_eq!(parse_subject_version("Subject with devicetree"), None); // 'dev' should not match
         assert_eq!(parse_subject_version("[PATCH 0/10]"), None); // 0/10 is not version
         assert_eq!(parse_subject_version("[PATCH v12]"), Some(12));
@@ -280,6 +280,9 @@ mod tests {
         assert_eq!(parse_subject_version("[PATCHv5 2/2]"), Some(5)); // Attached version
         assert_eq!(parse_subject_version("[PATCH 00/33 v6]"), Some(6)); // Version at end
         assert_eq!(parse_subject_version("[v3 PATCH 1/1]"), Some(3)); // Version at start
+
+        // Edge case: [PATCH] v3: ...
+        assert_eq!(parse_subject_version("[PATCH] v3: subject"), Some(3));
     }
 
     #[test]

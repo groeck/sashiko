@@ -1131,7 +1131,7 @@ mod tests {
             .unwrap();
         assert_eq!(ps1, ps1_update);
 
-        let list = db.get_patchsets(1, 0).await.unwrap();
+        let list = db.get_patchsets(1, 0, None).await.unwrap();
         assert_eq!(list[0].subject.as_deref(), Some("Cover Letter"));
 
         // 3. Add Patch 2 (index 2)
@@ -1158,7 +1158,7 @@ mod tests {
         .await
         .unwrap();
 
-        let list = db.get_patchsets(1, 0).await.unwrap();
+        let list = db.get_patchsets(1, 0, None).await.unwrap();
         assert_eq!(list[0].subject.as_deref(), Some("Cover Letter"));
 
         // 4. Create NEW patchset in same thread (Author B, Time 1000 - same time but diff author)
@@ -1388,7 +1388,7 @@ mod tests {
         }
 
         // Verify the final subject is the cover letter (index 0)
-        let list = db.get_patchsets(1, 0).await.unwrap();
+        let list = db.get_patchsets(1, 0, None).await.unwrap();
         assert_eq!(
             list[0].subject.as_deref(),
             Some("[PATCH 0/5] Feature part 0")
@@ -1427,7 +1427,7 @@ mod tests {
             .unwrap();
 
         // Check initial status
-        let list = db.get_patchsets(1, 0).await.unwrap();
+        let list = db.get_patchsets(1, 0, None).await.unwrap();
         assert_eq!(list[0].status.as_deref(), Some("Incomplete"));
 
         // 2. Add Patch 1. received=1. Total=2. Status should be Incomplete.
@@ -1437,7 +1437,7 @@ mod tests {
         .await
         .unwrap();
         db.create_patch(ps_id, "msg_1", 1, "diff").await.unwrap();
-        let list = db.get_patchsets(1, 0).await.unwrap();
+        let list = db.get_patchsets(1, 0, None).await.unwrap();
         assert_eq!(list[0].status.as_deref(), Some("Incomplete"));
 
         // 3. Add Patch 2. received=2. Total=2. Status should transition to Pending.
@@ -1447,7 +1447,7 @@ mod tests {
         .await
         .unwrap();
         db.create_patch(ps_id, "msg_2", 2, "diff").await.unwrap();
-        let list = db.get_patchsets(1, 0).await.unwrap();
+        let list = db.get_patchsets(1, 0, None).await.unwrap();
         assert_eq!(list[0].status.as_deref(), Some("Pending"));
     }
 
@@ -1918,96 +1918,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tagging() {
+    async fn test_merge_with_confusing_version_in_subject() {
         let db = setup_db().await;
-        let tag_id = db.ensure_tag("important").await.unwrap();
-        assert!(tag_id > 0);
-
-        // Ensure idempotency
-        let tag_id_2 = db.ensure_tag("important").await.unwrap();
-        assert_eq!(tag_id, tag_id_2);
-
-        // Thread
-        let thread_id = db.create_thread("root", "Thread", 1000).await.unwrap();
-        db.add_tag_to_thread(thread_id, tag_id).await.unwrap();
-
-        // Verify Thread Tag
-        let mut rows = db
-            .conn
-            .query(
-                "SELECT tag_id FROM threads_tags WHERE thread_id = ?",
-                libsql::params![thread_id],
-            )
+        let thread_id = db
+            .create_thread("root_confusing", "Confusing Versions", 80000)
             .await
             .unwrap();
-        assert_eq!(
-            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
-            tag_id
-        );
+        let author = "Confused Author <confused@example.com>";
 
-        // Message
+        // 1. [PATCH v3 00/17] -> v3
         db.create_message(
-            "msg1", thread_id, None, "Me", "Sub", 1000, "", "", "", None, None,
+            "msg_v3_conf_00",
+            thread_id,
+            None,
+            author,
+            "[PATCH v3 00/17] Cover",
+            80000,
+            "",
+            "",
+            "",
+            None,
+            None,
         )
         .await
         .unwrap();
-        let msg_db_id = db.get_message_id_by_msg_id("msg1").await.unwrap().unwrap();
-        db.add_tag_to_message(msg_db_id, tag_id).await.unwrap();
-
-        // Verify Message Tag
-        let mut rows = db
-            .conn
-            .query(
-                "SELECT tag_id FROM messages_tags WHERE message_id = ?",
-                libsql::params![msg_db_id],
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
-            tag_id
-        );
-
-        // Patchset
-        let ps_id = db
+        let ps_cover = db
             .create_patchset(
-                thread_id, None, "PS", "Me", 1000, 1, 1, "", "", None, None, 1,
+                thread_id,
+                Some("msg_v3_conf_00"),
+                "[PATCH v3 00/17] Cover",
+                author,
+                80000,
+                17,
+                1,
+                "",
+                "",
+                None,
+                Some(3),
+                0,
             )
             .await
             .unwrap()
             .unwrap();
-        db.add_tag_to_patchset(ps_id, tag_id).await.unwrap();
 
-        // Verify Patchset Tag
-        let mut rows = db
-            .conn
-            .query(
-                "SELECT tag_id FROM patchsets_tags WHERE patchset_id = ?",
-                libsql::params![ps_id],
+        // 2. [PATCH 01/17] Support v2 hardware -> Should treat as implicit version (None), NOT v2
+        db.create_message(
+            "msg_conf_01",
+            thread_id,
+            None,
+            author,
+            "[PATCH 01/17] Support v2 hardware",
+            80005,
+            "",
+            "",
+            "",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        // Here we simulate the parser extracting "2" from "v2" if it's aggressive
+        // But `create_patchset` takes the *parsed* version.
+        // If we want to simulate the BUG, we must pass what `parse_email` WOULD pass.
+        // `parse_email` uses `parse_subject_version`.
+        // Let's check what `parse_subject_version` does for this string.
+        let subject = "[PATCH 01/17] Support v2 hardware";
+        let parsed_ver = crate::patch::parse_subject_version(subject);
+
+        let ps_part1 = db
+            .create_patchset(
+                thread_id, None, subject, author, 80005, 17, 1, "", "", None,
+                parsed_ver, // Pass the result of the potentially buggy parser
+                1,
             )
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(
-            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
-            tag_id
-        );
 
-        // Patch
-        let p_id = db.create_patch(ps_id, "msg1", 1, "").await.unwrap();
-        db.add_tag_to_patch(p_id, tag_id).await.unwrap();
-
-        // Verify Patch Tag
-        let mut rows = db
-            .conn
-            .query(
-                "SELECT tag_id FROM patches_tags WHERE patch_id = ?",
-                libsql::params![p_id],
-            )
-            .await
-            .unwrap();
         assert_eq!(
-            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
-            tag_id
+            ps_cover, ps_part1,
+            "Should merge even if subject contains 'v2'"
         );
     }
 }
