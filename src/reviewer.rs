@@ -38,6 +38,16 @@ impl Reviewer {
             error!("Failed to create worktree directory: {}", e);
         }
 
+        // Reset any patchsets stuck in 'Reviewing' state from previous run
+        match self.db.reset_reviewing_status().await {
+            Ok(count) => {
+                if count > 0 {
+                    info!("Recovered {} interrupted reviews (reset to Pending)", count);
+                }
+            },
+            Err(e) => error!("Failed to reset reviewing status: {}", e),
+        }
+
         loop {
             match self.process_pending_patchsets().await {
                 Ok(_) => {},

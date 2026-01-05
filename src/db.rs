@@ -1151,6 +1151,14 @@ impl Database {
         ).await?;
         Ok(())
     }
+
+    pub async fn reset_reviewing_status(&self) -> Result<u64> {
+        let count = self.conn.execute(
+            "UPDATE patchsets SET status = 'Pending' WHERE status = 'Reviewing'",
+            (),
+        ).await?;
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
