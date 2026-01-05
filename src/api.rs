@@ -163,10 +163,57 @@ async fn get_message(
         Ok(Some(mut details)) => {
             if details.body.is_none() || details.body.as_deref() == Some("") {
                 if let (Some(hash), Some(group)) = (&details.git_blob_hash, &details.mailing_list) {
-                    let repo_path = std::path::PathBuf::from("archives").join(group);
-                    if let Ok(raw) = crate::git_ops::read_blob(&repo_path, hash).await {
-                        if let Ok((metadata, _)) = crate::patch::parse_email(&raw) {
-                            details.body = Some(metadata.body);
+                    let repo_root = std::path::PathBuf::from("archives").join(group);
+
+                    // 1. Find all potential repo paths (root + epochs)
+                    let mut candidate_paths = Vec::new();
+
+                    // Check epochs first (most likely for recent messages)
+                    if let Ok(mut entries) = tokio::fs::read_dir(&repo_root).await {
+                        let mut epochs = Vec::new();
+                        while let Ok(Some(entry)) = entries.next_entry().await {
+                            if let Ok(ft) = entry.file_type().await {
+                                if ft.is_dir() {
+                                    if let Ok(name) = entry.file_name().into_string() {
+                                        if let Ok(num) = name.parse::<i32>() {
+                                            epochs.push(num);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        epochs.sort_by(|a, b| b.cmp(a)); // Descending
+
+                        for epoch in epochs {
+                            candidate_paths.push(repo_root.join(epoch.to_string()));
+                        }
+                    }
+
+                    // Add root as fallback
+                    candidate_paths.push(repo_root.clone());
+
+                    // 2. Search for blob
+                    for path in candidate_paths {
+                        if let Ok(raw) = crate::git_ops::read_blob(&path, hash).await {
+                            if let Ok((metadata, _)) = crate::patch::parse_email(&raw) {
+                                details.body = Some(metadata.body.clone());
+
+                                // Optimization: Update DB to avoid future lookups
+                                // We spawn this to not block the response
+                                let db = state.db.clone();
+                                let body = metadata.body;
+                                let mid = id_val;
+                                tokio::spawn(async move {
+                                    if let Err(e) = db.update_message_body(mid, &body).await {
+                                        tracing::warn!(
+                                            "Failed to cache hydrated body for {}: {}",
+                                            mid,
+                                            e
+                                        );
+                                    }
+                                });
+                                break;
+                            }
                         }
                     }
                 }

@@ -458,6 +458,16 @@ impl Database {
         Ok(())
     }
 
+    pub async fn update_message_body(&self, id: i64, body: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE messages SET body = ? WHERE id = ?",
+                libsql::params![body, id],
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn create_baseline(
         &self,
         repo_url: Option<&str>,
