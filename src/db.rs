@@ -768,11 +768,72 @@ impl Database {
         }
     }
 
-    pub async fn get_patchsets(&self, limit: usize, offset: usize) -> Result<Vec<PatchsetRow>> {
-        let mut rows = self.conn.query(
-            "SELECT id, subject, status, thread_id, author, date, cover_letter_message_id, total_parts, received_parts FROM patchsets ORDER BY id DESC LIMIT ? OFFSET ?",
-            libsql::params![limit as i64, offset as i64],
-        ).await?;
+    fn build_search(&self, query: Option<String>) -> (String, Vec<String>) {
+        if let Some(q) = query {
+            let q = q.trim();
+            if q.is_empty() {
+                return (String::new(), vec![]);
+            }
+
+            if let Some(val) = q.strip_prefix("author:") {
+                return (
+                    "WHERE author LIKE ?".to_string(),
+                    vec![format!("%{}%", val.trim())],
+                );
+            } else if let Some(val) = q.strip_prefix("subject:") {
+                return (
+                    "WHERE subject LIKE ?".to_string(),
+                    vec![format!("%{}%", val.trim())],
+                );
+            } else if let Some(val) = q.strip_prefix("date:") {
+                return (
+                    "WHERE datetime(date, 'unixepoch') LIKE ?".to_string(),
+                    vec![format!("%{}%", val.trim())],
+                );
+            } else {
+                return (
+                    "WHERE subject LIKE ? OR author LIKE ?".to_string(),
+                    vec![format!("%{}%", q), format!("%{}%", q)],
+                );
+            }
+        }
+        (String::new(), vec![])
+    }
+
+    pub async fn get_patchsets(
+        &self,
+        limit: usize,
+        offset: usize,
+        query: Option<String>,
+    ) -> Result<Vec<PatchsetRow>> {
+        let (where_clause, mut params) = self.build_search(query);
+        let sql = format!(
+            "SELECT id, subject, status, thread_id, author, date, cover_letter_message_id, total_parts, received_parts FROM patchsets {} ORDER BY id DESC LIMIT ? OFFSET ?",
+            where_clause
+        );
+
+        // Append limit and offset to params.
+        // We need to convert params to a type that libsql accepts.
+        // Since build_search returns Vec<String>, we have to be careful with types.
+        // libsql::params! expects arguments that implement ToSql.
+        // We can pass `params` as a slice of &dyn ToSql if we box them?
+        // Or simpler: construct a generic params vector enum.
+
+        // Actually, mixing String and Integer params in a manual Vec is annoying in Rust strict typing.
+        // Let's use libsql::params::Params::from_iter if available, or just use `libsql::params!` for the static parts
+        // and hack the dynamic parts? No.
+
+        // Let's use `libsql::Statement::query` which takes params.
+        // We will cast everything to `libsql::Value`.
+
+        let mut args = Vec::new();
+        for p in params {
+            args.push(libsql::Value::Text(p));
+        }
+        args.push(libsql::Value::Integer(limit as i64));
+        args.push(libsql::Value::Integer(offset as i64));
+
+        let mut rows = self.conn.query(&sql, args).await?;
 
         let mut patchsets = Vec::new();
         while let Ok(Some(row)) = rows.next().await {
@@ -791,11 +852,26 @@ impl Database {
         Ok(patchsets)
     }
 
-    pub async fn get_messages(&self, limit: usize, offset: usize) -> Result<Vec<MessageRow>> {
-        let mut rows = self.conn.query(
-            "SELECT id, message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients, git_blob_hash, mailing_list FROM messages ORDER BY date DESC LIMIT ? OFFSET ?",
-            libsql::params![limit as i64, offset as i64],
-        ).await?;
+    pub async fn get_messages(
+        &self,
+        limit: usize,
+        offset: usize,
+        query: Option<String>,
+    ) -> Result<Vec<MessageRow>> {
+        let (where_clause, mut params) = self.build_search(query);
+        let sql = format!(
+            "SELECT id, message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients, git_blob_hash, mailing_list FROM messages {} ORDER BY date DESC LIMIT ? OFFSET ?",
+            where_clause
+        );
+
+        let mut args = Vec::new();
+        for p in params {
+            args.push(libsql::Value::Text(p));
+        }
+        args.push(libsql::Value::Integer(limit as i64));
+        args.push(libsql::Value::Integer(offset as i64));
+
+        let mut rows = self.conn.query(&sql, args).await?;
 
         let mut messages = Vec::new();
         while let Ok(Some(row)) = rows.next().await {
@@ -807,22 +883,27 @@ impl Database {
                 author: row.get(4).ok(),
                 subject: row.get(5).ok(),
                 date: row.get(6).ok(),
-                body: row.get(7).ok(), // Note: Full body might be heavy, but strictly following instruction to map to MessageRow
+                body: row.get(7).ok(),
                 to: row.get(8).ok(),
                 cc: row.get(9).ok(),
                 git_blob_hash: row.get(10).ok(),
                 mailing_list: row.get(11).ok(),
-                thread: None, // List view doesn't need thread details
+                thread: None,
             });
         }
         Ok(messages)
     }
 
-    pub async fn count_patchsets(&self) -> Result<usize> {
-        let mut rows = self
-            .conn
-            .query("SELECT COUNT(*) FROM patchsets", libsql::params![])
-            .await?;
+    pub async fn count_patchsets(&self, query: Option<String>) -> Result<usize> {
+        let (where_clause, params) = self.build_search(query);
+        let sql = format!("SELECT COUNT(*) FROM patchsets {}", where_clause);
+
+        let mut args = Vec::new();
+        for p in params {
+            args.push(libsql::Value::Text(p));
+        }
+
+        let mut rows = self.conn.query(&sql, args).await?;
         if let Ok(Some(row)) = rows.next().await {
             let count: i64 = row.get(0)?;
             Ok(count as usize)
@@ -831,11 +912,16 @@ impl Database {
         }
     }
 
-    pub async fn count_messages(&self) -> Result<usize> {
-        let mut rows = self
-            .conn
-            .query("SELECT COUNT(*) FROM messages", libsql::params![])
-            .await?;
+    pub async fn count_messages(&self, query: Option<String>) -> Result<usize> {
+        let (where_clause, params) = self.build_search(query);
+        let sql = format!("SELECT COUNT(*) FROM messages {}", where_clause);
+
+        let mut args = Vec::new();
+        for p in params {
+            args.push(libsql::Value::Text(p));
+        }
+
+        let mut rows = self.conn.query(&sql, args).await?;
         if let Ok(Some(row)) = rows.next().await {
             let count: i64 = row.get(0)?;
             Ok(count as usize)

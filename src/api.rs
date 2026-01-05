@@ -21,6 +21,7 @@ pub struct AppState {
 pub struct Pagination {
     pub page: Option<usize>,
     pub per_page: Option<usize>,
+    pub q: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -79,12 +80,12 @@ async fn list_patchsets(
 
     let items = state
         .db
-        .get_patchsets(per_page, offset)
+        .get_patchsets(per_page, offset, pagination.q.clone())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let total = state
         .db
-        .count_patchsets()
+        .count_patchsets(pagination.q.clone())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -106,12 +107,12 @@ async fn list_messages(
 
     let items = state
         .db
-        .get_messages(per_page, offset)
+        .get_messages(per_page, offset, pagination.q.clone())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let total = state
         .db
-        .count_messages()
+        .count_messages(pagination.q.clone())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -184,8 +185,8 @@ async fn get_message(
 }
 
 async fn get_stats(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let messages = state.db.count_messages().await.unwrap_or(0);
-    let patchsets = state.db.count_patchsets().await.unwrap_or(0);
+    let messages = state.db.count_messages(None).await.unwrap_or(0);
+    let patchsets = state.db.count_patchsets(None).await.unwrap_or(0);
 
     Json(serde_json::json!({
         "status": "ok",

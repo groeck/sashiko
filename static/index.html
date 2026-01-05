@@ -22,6 +22,12 @@
     <h1>Sashiko Patch Tracker</h1>
     <div id="stats">Loading stats...</div>
 
+    <div style="margin-top: 20px; margin-bottom: 20px;">
+        <input type="text" id="searchInput" placeholder="Search (subject, author:..., subject:..., date:...)" style="width: 300px; padding: 5px;">
+        <button onclick="triggerSearch()">Search</button>
+        <button onclick="clearSearch()">Clear</button>
+    </div>
+
     <div style="margin-top: 15px; margin-bottom: 10px;">
         <button id="btn-patchsets" onclick="setMode('patchsets')" disabled>Patchsets</button>
         <button id="btn-messages" onclick="setMode('messages')">Messages</button>
@@ -55,6 +61,7 @@
         const perPage = 50;
         let totalPages = 1;
         let currentMode = 'patchsets'; // 'patchsets' or 'messages'
+        let currentQuery = '';
 
         async function fetchStats() {
             const res = await fetch('/api/stats');
@@ -64,6 +71,26 @@
                 Messages: ${data.messages} | Patchsets: ${data.patchsets}
             `;
         }
+
+        function triggerSearch() {
+            const input = document.getElementById('searchInput');
+            currentQuery = input.value.trim();
+            currentPage = 1;
+            fetchData();
+        }
+
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            currentQuery = '';
+            currentPage = 1;
+            fetchData();
+        }
+
+        document.getElementById('searchInput').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                triggerSearch();
+            }
+        });
 
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
@@ -128,7 +155,11 @@
 
         async function fetchData() {
             const endpoint = currentMode === 'patchsets' ? '/api/patchsets' : '/api/messages';
-            const res = await fetch(`${endpoint}?page=${currentPage}&per_page=${perPage}`);
+            let url = `${endpoint}?page=${currentPage}&per_page=${perPage}`;
+            if (currentQuery) {
+                url += `&q=${encodeURIComponent(currentQuery)}`;
+            }
+            const res = await fetch(url);
             const data = await res.json();
             
             const items = data.items || [];
