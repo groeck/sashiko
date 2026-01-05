@@ -226,8 +226,29 @@ pub async fn ensure_remote(
     force_fetch: bool,
 ) -> Result<()> {
     // 1. Security Check
-    if !url.contains("kernel.org") {
-        return Err(anyhow!("Refusing to add non-kernel.org remote: {}", url));
+    let allowed_domains = [
+        "kernel.org",
+        "lwn.net",
+        "freedesktop.org",
+        "linuxtv.org",
+        "infradead.org",
+        "armlinux.org.uk",
+        "intel.com",
+        "github.com",
+        "gitlab.com",
+        "google.com",
+        "googlesource.com",
+        "opensuse.org",
+    ];
+
+    let is_allowed = allowed_domains.iter().any(|d| url.contains(d));
+
+    if !is_allowed {
+        return Err(anyhow!(
+            "Refusing to add non-whitelisted remote: {}. Allowed domains: {:?}",
+            url,
+            allowed_domains
+        ));
     }
 
     // Acquire lock for this remote
