@@ -11,12 +11,13 @@
         .section h2 { margin-top: 0; font-size: 1.2em; border-bottom: 1px solid #eee; padding-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
         .kv { display: grid; grid-template-columns: 150px 1fr; gap: 10px; margin-bottom: 5px; }
         .label { font-weight: bold; color: #555; }
-        .status-Pending { color: orange; }
-        .status-Applying { color: #1976d2; }
-        .status-Analyzing { color: #1976d2; }
-        .status-Finished { color: green; }
-        .status-Applied { color: green; }
-        .status-Failed { color: red; }
+        .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; font-weight: 500; border: 1px solid transparent; }
+        .status-Pending { background-color: #fff3e0; color: #e65100; border-color: #ffe0b2; }
+        .status-Applying, .status-Analyzing, .status-Reviewing { background-color: #e3f2fd; color: #1565c0; border-color: #bbdefb; }
+        .status-Finished, .status-Applied, .status-Reviewed { background-color: #e8f5e9; color: #2e7d32; border-color: #c8e6c9; }
+        .status-Failed { background-color: #ffebee; color: #c62828; border-color: #ffcdd2; }
+        .status-Incomplete { background-color: #f5f5f5; color: #616161; border-color: #e0e0e0; }
+
         .tag { display: inline-block; background: #e0f7fa; color: #006064; padding: 1px 4px; border-radius: 3px; font-size: 0.75em; margin-right: 4px; border: 1px solid #b2ebf2; vertical-align: middle; }
         .reviews-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         .reviews-table th, .reviews-table td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
@@ -28,7 +29,6 @@
         .review-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 4px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .review-header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 10px; flex-wrap: wrap; gap: 10px; }
         .review-title { font-weight: bold; font-size: 1.1em; }
-        .review-status { font-weight: bold; padding: 2px 6px; border-radius: 4px; background: #f0f0f0; }
         .review-meta { display: grid; grid-template-columns: auto 1fr; gap: 8px 15px; font-size: 0.9em; color: #555; margin-bottom: 10px; }
         .review-meta-label { font-weight: 600; }
         .review-summary { margin-bottom: 10px; font-weight: 500; background: #f9f9f9; padding: 10px; border-left: 4px solid #ddd; }
@@ -181,7 +181,7 @@
                         <div class="review-card">
                             <div class="review-header">
                                 <div class="review-title">Review</div>
-                                <div class="review-status ${statusClass}">${status}</div>
+                                <div class="status-badge ${statusClass}">${status}</div>
                             </div>
                             
                             <div class="review-meta">
@@ -322,7 +322,7 @@
 
             document.getElementById('content').innerHTML = `
                 <div class="section">
-                    <h2>Metadata <span style="font-size:0.75em; font-weight:normal; border:1px solid #ddd; background:#f9f9f9; padding:2px 8px; border-radius:4px;" class="status-${data.status}">${data.status || 'Pending'}</span></h2>
+                    <h2>Metadata <span class="status-${data.status} status-badge">${data.status || 'Pending'}</span></h2>
                     <div class="kv"><div class="label">Subject:</div><div>${data.subject || '(no subject)'}</div></div>
                     <div class="kv"><div class="label">Author:</div><div>${data.author || 'unknown'}</div></div>
                     <div class="kv"><div class="label">Date:</div><div>${date}</div></div>
