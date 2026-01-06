@@ -19,22 +19,34 @@
             font-size: 13px;
             line-height: 1.4;
             color: #24292e;
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
-            background-color: #ffffff;
+            background-color: #f5f5f5;
+        }
+
+        /* Navigation similar to message.html */
+        .nav { margin-bottom: 20px; }
+        a.back-link { text-decoration: none; color: #007bff; }
+        a.back-link:hover { text-decoration: underline; }
+
+        /* Container similar to message.html/details.html */
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #ddd;
         }
 
         h1 {
-            font-size: 1.2em;
+            font-size: 1.4em;
             border-bottom: 1px solid var(--border);
             padding-bottom: 10px;
+            margin-top: 0;
             margin-bottom: 20px;
             font-weight: 600;
         }
-
-        a { color: #0366d6; text-decoration: none; }
-        a:hover { text-decoration: underline; }
 
         .meta-header {
             font-size: 0.9em;
@@ -43,13 +55,17 @@
         }
 
         .log-container {
-            border-top: 1px solid var(--border);
+            /* Removed border-top since H1 has border-bottom and is in same container */
         }
 
         .entry {
             display: flex;
             border-bottom: 1px solid #eee;
-            padding: 4px 0;
+            padding: 6px 0;
+        }
+
+        .entry:last-child {
+            border-bottom: none;
         }
 
         .entry:hover {
@@ -76,7 +92,7 @@
 
         /* Roles */
         .role-user .gutter { color: var(--col-user); }
-        .role-model .gutter { color: var(--col-model); } /* Model isn't special color, just bold */
+        .role-model .gutter { color: var(--col-model); } 
         .role-tool .gutter { color: var(--col-tool); }
 
         .role-tool .content { color: var(--col-tool); }
@@ -108,26 +124,25 @@
             color: #555;
         }
 
-        .meta-footer {
-            font-size: 0.85em;
-            color: #999;
-            margin-top: 2px;
-        }
-
         .error { color: #cb2431; }
         .loading { color: var(--col-meta); text-align: center; padding: 20px; }
 
     </style>
 </head>
 <body>
-    <h1>
-        <a href="javascript:history.back()" style="margin-right: 10px; color: #555; text-decoration: none;">←</a>
-        Interaction Log
-        <span id="header-meta" style="float: right; font-weight: normal; font-size: 0.8em; color: #777;"></span>
-    </h1>
+    <div class="nav">
+        <a href="javascript:history.back()" class="back-link">← Back</a>
+    </div>
 
-    <div id="log-container" class="log-container">
-        <div class="loading">Loading...</div>
+    <div class="container">
+        <h1>
+            Interaction Log
+            <span id="header-meta" style="float: right; font-weight: normal; font-size: 0.7em; color: #777; margin-top: 4px;"></span>
+        </h1>
+
+        <div id="log-container" class="log-container">
+            <div class="loading">Loading...</div>
+        </div>
     </div>
 
     <script>
@@ -197,12 +212,6 @@
                         contentHtml += `<div><span style="opacity:0.6">➔ ${escapeHtml(fr.name)}:</span> ${formatJson(fr.response)}</div>`;
                     }
                 });
-
-                // Add Meta footer if model has usage info in this entry (some implementations store it)
-                // If the top-level 'data' has usage for the whole request, we showed it in header.
-                // If individual log entries have timing or metadata, we could show it here.
-                // Assuming standard Gemini format, usually usage is at the end or aggregated.
-                // We'll leave it simple for now.
 
                 const div = document.createElement('div');
                 div.className = rowClass;
