@@ -11,10 +11,23 @@
         .meta { color: #666; font-size: 0.9em; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
         .meta div { margin-bottom: 4px; }
         .label { font-weight: bold; width: 60px; display: inline-block; }
-        pre { background: #f8f8f8; padding: 15px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; font-family: 'Courier New', Courier, monospace; line-height: 1.4; }
-        .diff-added { background-color: #e6ffed; color: #22863a; display: block; }
-        .diff-removed { background-color: #ffeef0; color: #cb2431; display: block; }
-        .diff-header { color: #005cc5; font-weight: bold; }
+        pre { 
+            background: #f6f8fa; 
+            color: #24292f;
+            padding: 10px; 
+            overflow-x: auto; 
+            white-space: pre-wrap; 
+            word-wrap: break-word; 
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; 
+            font-size: 13px;
+            line-height: 1.45;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+        }
+        .diff-line { display: block; padding: 0 4px; min-height: 1.5em; }
+        .diff-added { background-color: #e6ffec; color: #24292f; }
+        .diff-removed { background-color: #ffebe9; color: #24292f; }
+        .diff-header { background-color: #ddf4ff; color: #005cc5; font-weight: bold; }
         .copy-btn { margin-left: 10px; cursor: pointer; padding: 2px 8px; background: #eee; border: 1px solid #ccc; border-radius: 4px; font-size: 0.8em; }
         .copy-btn:hover { background: #ddd; }
         .nav { margin-bottom: 20px; }
@@ -97,15 +110,18 @@
             const lines = text.split('\n');
             return lines.map(line => {
                 const escaped = escapeHtml(line);
+                let className = 'diff-line';
                 if (line.startsWith('+') && !line.startsWith('+++')) {
-                    return `<span class="diff-added">${escaped}</span>`;
+                    className += ' diff-added';
                 } else if (line.startsWith('-') && !line.startsWith('---')) {
-                    return `<span class="diff-removed">${escaped}</span>`;
+                    className += ' diff-removed';
                 } else if (line.startsWith('@@') || line.startsWith('diff --git') || line.startsWith('--- ') || line.startsWith('+++ ')) {
-                    return `<span class="diff-header">${escaped}</span>`;
+                    className += ' diff-header';
                 }
-                return escaped;
-            }).join('\n');
+                
+                const content = line.length === 0 ? '&nbsp;' : escaped;
+                return `<div class="${className}">${content}</div>`;
+            }).join('');
         }
 
         function escapeHtml(text) {
