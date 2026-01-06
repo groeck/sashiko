@@ -247,10 +247,11 @@
                         contentHtml += `<div class="text-part">${formatText(part.text)}</div>`;
                     }
                     else if (part.functionCall) {
+                        const signature = formatFunctionSignature(part.functionCall.name, part.functionCall.args);
                         contentHtml += `
                             <div class="fn-call-box">
-                                <span class="fn-name">🔧 Call: ${escapeHtml(part.functionCall.name)}</span>
-                                ${formatJson(part.functionCall.args, "Arguments")}
+                                <span class="fn-name">🔧 ${escapeHtml(signature)}</span>
+                                ${formatJson(part.functionCall.args, "Full Arguments", true)}
                             </div>
                         `;
                     }
@@ -258,16 +259,17 @@
                         contentHtml += `
                             <div class="fn-resp-box">
                                 <span class="fn-name">✅ Response: ${escapeHtml(part.functionResponse.name)}</span>
-                                ${formatJson(part.functionResponse.response, "Return Value")}
+                                ${formatJson(part.functionResponse.response, "Return Value", true)}
                             </div>
                         `;
                     }
                     // Handle snake_case fallbacks just in case (e.g. if DB stored older version)
                     else if (part.function_call) {
+                         const signature = formatFunctionSignature(part.function_call.name, part.function_call.args);
                          contentHtml += `
                             <div class="fn-call-box">
-                                <span class="fn-name">🔧 Call: ${escapeHtml(part.function_call.name)}</span>
-                                ${formatJson(part.function_call.args, "Arguments")}
+                                <span class="fn-name">🔧 ${escapeHtml(signature)}</span>
+                                ${formatJson(part.function_call.args, "Full Arguments", true)}
                             </div>
                         `;
                     }
@@ -275,7 +277,7 @@
                          contentHtml += `
                             <div class="fn-resp-box">
                                 <span class="fn-name">✅ Response: ${escapeHtml(part.function_response.name)}</span>
-                                ${formatJson(part.function_response.response, "Return Value")}
+                                ${formatJson(part.function_response.response, "Return Value", true)}
                             </div>
                         `;
                     }
@@ -298,6 +300,58 @@
                 `;
                 chatContainer.appendChild(row);
             });
+        }
+
+        function formatFunctionSignature(name, args) {
+            try {
+                // If args is string (sometimes happens with some LLMs/libraries), try parsing
+                if (typeof args === 'string') {
+                    try { args = JSON.parse(args); } catch (e) {}
+                }
+
+                if (!args || typeof args !== 'object') {
+                    return `${name}()`;
+                }
+
+                const parts = [];
+                for (const [key, value] of Object.entries(args)) {
+                    let valStr;
+                    if (typeof value === 'string') {
+                        valStr = `"${value}"`;
+                    } else {
+                        valStr = JSON.stringify(value);
+                    }
+                    parts.push(`${valStr}`); // Often positional args are better for reading, but we have named args.
+                    // The user example `list_dir(".")` implies positional style or just value?
+                    // But JSON args are key-value. 
+                    // `list_dir(path=".")` is clearer for named args. 
+                    // But if there is only one arg and it's obvious...
+                    // Let's stick to `key=value` or just `value` if it's common convention?
+                    // User said: `list_dir(".")`. This implies hiding the key if it's "path"?
+                    // Or maybe just showing values? 
+                    // Safest is `key=val` for generic tools. 
+                    // But let's try to be smart? No, keeps it simple: `key="value"`.
+                    // Wait, user example `list_dir(".")` is strictly `value`. 
+                    // If I output `path="."`, is that acceptable? Yes, likely better for clarity.
+                    // Let's use `key=value`.
+                    // Update: User specifically showed `list_dir(".")`.
+                    // If I use `path="."`, it might be `list_dir(path=".")`.
+                    // Let's go with `val` if there's only 1 arg? No, keys matter.
+                    // I will format as `key=value` to be safe and clear. 
+                    // Exception: if the user explicitly wants `list_dir(".")`, maybe they mean just values.
+                    // I'll produce `key=value` as it's more correct for JSON args.
+                    
+                    // Actually, let's look at the user prompt again: `list_dir(".")`.
+                    // This looks like python style positional.
+                    // But we receive `{ "path": "." }`.
+                    // If I render `list_dir(path=".")`, it's close enough and unambiguous.
+                    
+                    parts.push(`${key}=${valStr}`);
+                }
+                return `${name}(${parts.join(', ')})`;
+            } catch (e) {
+                return `${name}(...)`;
+            }
         }
 
         function formatText(text) {
@@ -325,21 +379,23 @@
             return `<div class="content-block">${escapeHtml(text)}</div>`;
         }
 
-        function formatJson(obj, label) {
+        function formatJson(obj, label, forceCollapse = false) {
             const jsonStr = JSON.stringify(obj, null, 2);
             const lines = jsonStr.split('\n');
             const maxLines = 5;
 
-            // Always use collapsible for JSON if it's multiline? 
-            // Or use the same 5-line rule.
-            
-            if (lines.length > maxLines + 2) {
-                 const preview = lines.slice(0, maxLines).join('\n');
+            // If forceCollapse is true, always hide behind toggle
+            if (forceCollapse || lines.length > maxLines + 2) {
+                 const preview = forceCollapse ? '' : lines.slice(0, maxLines).join('\n') + ' ... }';
+                 const headerText = label + (forceCollapse ? '' : ' (Full JSON)');
+                 
+                 // If forceCollapse, we don't show preview text outside? Or maybe just "Show ..."?
+                 // Let's just return a collapsible.
+                 
                  return `
-                    <div class="content-block" style="font-size:0.85em; opacity:0.8;">${escapeHtml(preview)} ... }</div>
                     <div class="collapsible">
                         <div class="collapsible-header" onclick="this.parentElement.classList.toggle('open')">
-                            ${label} (Full JSON) <span class="arrow"></span>
+                            ${headerText} <span class="arrow"></span>
                         </div>
                         <div class="collapsible-content">
                             <pre class="content-block">${escapeHtml(jsonStr)}</pre>
