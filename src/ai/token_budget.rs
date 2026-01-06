@@ -34,7 +34,7 @@ impl TokenBudget {
             return 0;
         }
         // Basic heuristic: 1 token approx 4 chars
-        (text.len() + 3) / 4
+        text.len().div_ceil(4)
     }
 }
 
