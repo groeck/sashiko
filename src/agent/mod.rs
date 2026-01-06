@@ -23,8 +23,10 @@ pub struct Agent {
 }
 
 pub struct AgentResult {
-    pub output: Value,
+    pub output: Option<Value>,
+    pub error: Option<String>,
     pub input_context: String,
+    pub history: Vec<Content>,
     pub tokens_in: u32,
     pub tokens_out: u32,
 }
@@ -127,14 +129,21 @@ impl Agent {
         });
 
         let mut turns = 0;
-        const MAX_TURNS: usize = 10;
+        const MAX_TURNS: usize = 25;
         let mut total_tokens_in = 0;
         let mut total_tokens_out = 0;
 
         loop {
             turns += 1;
             if turns > MAX_TURNS {
-                return Err(anyhow!("Agent exceeded maximum turns ({})", MAX_TURNS));
+                return Ok(AgentResult {
+                    output: None,
+                    error: Some(format!("Agent exceeded maximum turns ({})", MAX_TURNS)),
+                    input_context,
+                    history: self.history.clone(),
+                    tokens_in: total_tokens_in,
+                    tokens_out: total_tokens_out,
+                });
             }
 
             let response_schema = json!({
@@ -272,8 +281,10 @@ impl Agent {
                 })?;
 
                 return Ok(AgentResult {
-                    output: json_val,
+                    output: Some(json_val),
+                    error: None,
                     input_context,
+                    history: self.history.clone(),
                     tokens_in: total_tokens_in,
                     tokens_out: total_tokens_out,
                 });

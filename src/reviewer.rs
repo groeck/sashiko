@@ -294,19 +294,52 @@ impl Reviewer {
                             {
                                 Ok(json_output) => {
                                     // Check patches status
-                                    // The tool returns status for ALL applied patches (up to index).
-                                    // We need to check if the TARGET patch (index) was applied and reviewed.
                                     let patches_status = json_output["patches"].as_array();
                                     let target_applied = patches_status
                                         .and_then(|arr| arr.iter().find(|p| p["index"] == *index))
                                         .map(|p| p["status"] == "applied")
                                         .unwrap_or(false);
 
-                                    // Also check if ANY previous patch failed, which would prevent this one?
-                                    // If target applied, we are good.
+                                    let history = json_output.get("history");
+                                    let logs_str = if let Some(h) = history {
+                                        serde_json::to_string_pretty(h).ok()
+                                    } else {
+                                        None
+                                    };
 
                                     if target_applied {
-                                        if let Some(review_content) = json_output.get("review") {
+                                        if let Some(error_msg) = json_output["error"].as_str() {
+                                            error!(
+                                                "Review tool returned error for ps={} idx={}: {}",
+                                                patchset_id, index, error_msg
+                                            );
+                                            let _ = db
+                                                .complete_review(
+                                                    review_id,
+                                                    "Failed",
+                                                    error_msg,
+                                                    None,
+                                                    None,
+                                                    None,
+                                                    logs_str.as_deref(),
+                                                )
+                                                .await;
+
+                                            if retries < MAX_RETRIES {
+                                                retries += 1;
+                                                warn!(
+                                                    "AI failed for ps={} idx={}. Retrying (attempt {}/{})...",
+                                                    patchset_id, index, retries, MAX_RETRIES
+                                                );
+                                                continue;
+                                            } else {
+                                                final_status =
+                                                    "Review Failed (Partial)".to_string();
+                                                break;
+                                            }
+                                        } else if let Some(review_content) =
+                                            json_output.get("review")
+                                        {
                                             if !review_content.is_null() {
                                                 // Record Interaction
                                                 let interaction_id = generate_id();
@@ -352,6 +385,7 @@ impl Reviewer {
                                                         Some(&summary),
                                                         Some(&interaction_id),
                                                         inline_review,
+                                                        logs_str.as_deref(),
                                                     )
                                                     .await;
                                                 break; // Success for this patch
@@ -364,6 +398,7 @@ impl Reviewer {
                                                         None,
                                                         None,
                                                         None,
+                                                        logs_str.as_deref(),
                                                     )
                                                     .await;
                                                 if retries < MAX_RETRIES {
@@ -374,10 +409,6 @@ impl Reviewer {
                                                     );
                                                     continue;
                                                 } else {
-                                                    // If max retries reached, we mark as failed but continue to next patch?
-                                                    // Or fail the whole set?
-                                                    // Prompt says "reviews all patches... Each review should be independent".
-                                                    // So we continue.
                                                     final_status =
                                                         "Review Failed (Partial)".to_string();
                                                     break;
@@ -396,8 +427,13 @@ impl Reviewer {
 
                                             let _ = db
                                                 .complete_review(
-                                                    review_id, "Failed", error_msg, None, None,
+                                                    review_id,
+                                                    "Failed",
+                                                    error_msg,
                                                     None,
+                                                    None,
+                                                    None,
+                                                    logs_str.as_deref(),
                                                 )
                                                 .await;
                                             if retries < MAX_RETRIES {
@@ -424,15 +460,19 @@ impl Reviewer {
                                             .await;
                                         let _ = db
                                             .complete_review(
-                                                review_id, "Failed", error_msg, None, None, None,
+                                                review_id,
+                                                "Failed",
+                                                error_msg,
+                                                None,
+                                                None,
+                                                None,
+                                                logs_str.as_deref(),
                                             )
                                             .await;
 
                                         candidate_success = false;
                                         final_status = "Failed".to_string();
-                                        break; // If application fails, we probably can't apply subsequent patches?
-                                        // Actually yes, if patch 1 fails, patch 2 (which depends on 1) will fail.
-                                        // So we should break the loop for this candidate.
+                                        break;
                                     }
                                 }
                                 Err(e) => {
@@ -442,6 +482,7 @@ impl Reviewer {
                                             review_id,
                                             "Failed",
                                             &format!("Tool error: {}", e),
+                                            None,
                                             None,
                                             None,
                                             None,

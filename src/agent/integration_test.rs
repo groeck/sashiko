@@ -49,7 +49,19 @@ mod tests {
 
         match result {
             Ok(agent_res) => {
-                let review = agent_res.output;
+                if let Some(err) = agent_res.error {
+                    if err.contains("Agent exceeded maximum turns") {
+                        println!(
+                            "Agent reached max turns, which confirms it was running and using tools. Success."
+                        );
+                        return;
+                    }
+                    panic!("Agent returned error: {}", err);
+                }
+
+                let review = agent_res
+                    .output
+                    .expect("Review output should be present on success");
                 let is_empty = match &review {
                     serde_json::Value::Null => true,
                     serde_json::Value::String(s) => s.is_empty(),
@@ -61,13 +73,7 @@ mod tests {
                 println!("Agent review output: {}", review);
             }
             Err(e) => {
-                if e.to_string().contains("Agent exceeded maximum turns") {
-                    println!(
-                        "Agent reached max turns, which confirms it was running and using tools. Success."
-                    );
-                } else {
-                    panic!("Agent run failed: {}", e);
-                }
+                panic!("Agent run failed: {}", e);
             }
         }
     }

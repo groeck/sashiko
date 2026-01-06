@@ -370,7 +370,7 @@ impl ToolBox {
 
         // grep returns exit code 1 if no matches found, which is not an error for us
         if !output.status.success() && output.status.code() != Some(1) {
-             return Err(anyhow!(
+            return Err(anyhow!(
                 "grep failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             ));
@@ -378,7 +378,7 @@ impl ToolBox {
 
         let content = String::from_utf8_lossy(&output.stdout).to_string();
         if content.is_empty() {
-             return Ok(json!({ "matches": [], "message": "No matches found." }));
+            return Ok(json!({ "matches": [], "message": "No matches found." }));
         }
 
         Ok(json!({ "content": self.truncate_output(content) }))
@@ -389,7 +389,7 @@ impl ToolBox {
             .as_str()
             .ok_or_else(|| anyhow!("Missing pattern"))?;
         let path_str = args["path"].as_str().unwrap_or(".");
-        
+
         let path = self.validate_path(path_str, &self.worktree_path)?;
 
         // Using 'find' command
@@ -405,7 +405,7 @@ impl ToolBox {
             .await?;
 
         if !output.status.success() {
-             return Err(anyhow!(
+            return Err(anyhow!(
                 "find failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             ));
@@ -417,8 +417,8 @@ impl ToolBox {
         // Limit results
         if files.len() > 1000 {
             let truncated = files[..1000].join("\n");
-             return Ok(json!({ 
-                 "files": truncated, 
+            return Ok(json!({
+                 "files": truncated,
                  "total_found": files.len(),
                  "message": "Output truncated to 1000 files."
             }));

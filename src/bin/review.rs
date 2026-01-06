@@ -221,7 +221,7 @@ async fn main() -> Result<()> {
 
             match agent.run(patchset_val).await {
                 Ok(result) => {
-                    info!("AI review completed.");
+                    info!("AI review completed (or stopped).");
 
                     // Check for review-inline.txt
                     let inline_path = worktree.path.join("review-inline.txt");
@@ -242,15 +242,17 @@ async fn main() -> Result<()> {
                         "baseline": baseline,
                         "patches": patch_results,
                         "review": result.output,
+                        "error": result.error,
                         "inline_review": inline_content,
                         "input_context": result.input_context,
+                        "history": result.history,
                         "tokens_in": result.tokens_in,
                         "tokens_out": result.tokens_out
                     });
                     println!("{}", serde_json::to_string_pretty(&result_json)?);
                 }
                 Err(e) => {
-                    error!("AI review failed: {}", e);
+                    error!("AI review failed with exception: {}", e);
                     // Even on failure, we print what we have (patches status)
                     let result_json = json!({
                         "patchset_id": patchset_id,
