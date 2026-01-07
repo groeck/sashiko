@@ -288,8 +288,16 @@
             sortedPatchIds.forEach(pid => {
                 const patch = patchMap.get(pid);
                 const reviews = reviewsByPatch.get(pid);
-                const patchLabel = patch ? `Patch ${patch.part_index}: ${patch.subject || '(no subject)'}` : `Patch ID ${pid}`;
-                const patchLink = patch && patch.msg_db_id ? `/static/message.html?id=${patch.msg_db_id}` : '#';
+                
+                let headerHtml = '';
+                if (patch) {
+                    const prefix = `Patch ${patch.part_index}: `;
+                    const subject = patch.subject || '(no subject)';
+                    const patchLink = patch.msg_db_id ? `/static/message.html?id=${patch.msg_db_id}` : '#';
+                    headerHtml = `<span>${escapeHtml(prefix)}</span><a href="${patchLink}">${escapeHtml(subject)}</a>`;
+                } else {
+                    headerHtml = `Patch ID ${pid}`;
+                }
                 
                 // Calculate total tokens for this patch
                 let totalTokensPatch = 0;
@@ -300,7 +308,7 @@
                 reviewsHtml += `
                     <div style="margin-top: 20px; ${borderStyle}">
                         <h3 style="display:flex; justify-content:space-between;">
-                            <a href="${patchLink}" class="patch-link">${escapeHtml(patchLabel)}</a>
+                            <div>${headerHtml}</div>
                             <span style="font-size:0.8em; font-weight:normal; color:#666;">Total Tokens: ${totalTokensPatch.toLocaleString()}</span>
                         </h3>
                         ${renderReviewList(reviews)}
@@ -340,7 +348,7 @@
                     listHtml += `
                         <li style="margin-left: 20px; padding: 2px;">
                             ${arrow}<span style="color: #666; font-family: monospace;">[${mDate}]</span> 
-                            ${m.author || 'unknown'}: 
+                            ${(m.author || 'unknown').trim()}: 
                             <a href="/static/message.html?id=${m.id}">
                                ${m.subject || '(no subject)'}
                             </a>

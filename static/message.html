@@ -193,7 +193,7 @@
                 html += `
                     <li style="margin-left: 20px; padding: 2px;">
                         ${arrow}<span style="color: #666; font-family: monospace;">[${mDate}]</span> 
-                        ${m.author || 'unknown'}: 
+                        ${(m.author || 'unknown').trim()}: 
                         <a href="/static/message.html?id=${m.id}" style="${style}">
                            ${m.subject || '(no subject)'}
                         </a>
