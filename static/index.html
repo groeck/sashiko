@@ -274,6 +274,7 @@
         .status-dot.status-Applying { background-color: #d67f05; }
         .status-dot.status-Reviewed { background-color: #22863a; }
         .status-dot.status-Failed { background-color: #d73a49; }
+        .status-dot.status-FailedToApply { background-color: #d73a49; }
         .status-dot.status-Cancelled { background-color: #6a737d; }
         .status-dot.status-Incomplete { background-color: #6a737d; }
 
@@ -998,6 +999,9 @@
                         </div>
                         <div class="stats-group" title="Reviewed">
                             <span class="status-dot status-Reviewed"></span> ${b.reviewed || 0}
+                        </div>
+                        <div class="stats-group" title="Failed To Apply">
+                            <span class="status-dot status-FailedToApply"></span> ${b.failed_to_apply || 0}
                         </div>
                         <div class="stats-group" title="Failed">
                             <span class="status-dot status-Failed"></span> ${b.failed || 0}

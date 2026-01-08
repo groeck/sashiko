@@ -252,6 +252,7 @@ impl Reviewer {
                 // The original code tried candidates until one worked.
 
                 let mut review_success = false;
+                let mut any_patch_failed_to_apply = false;
 
                 for candidate in candidates {
                     let baseline_ref = candidate.as_str();
@@ -545,6 +546,7 @@ impl Reviewer {
                                         }
                                     } else {
                                         // Patch application failed
+                                        any_patch_failed_to_apply = true;
                                         let patches_debug =
                                             serde_json::to_string_pretty(&json_output["patches"])
                                                 .unwrap_or_default();
@@ -554,14 +556,14 @@ impl Reviewer {
                                         let _ = db
                                             .update_review_status(
                                                 review_id,
-                                                ReviewStatus::Failed.as_str(),
+                                                ReviewStatus::FailedToApply.as_str(),
                                                 Some(&patches_debug),
                                             )
                                             .await;
                                         let _ = db
                                             .complete_review(
                                                 review_id,
-                                                ReviewStatus::Failed.as_str(),
+                                                ReviewStatus::FailedToApply.as_str(),
                                                 error_msg,
                                                 None,
                                                 None,
@@ -615,6 +617,8 @@ impl Reviewer {
 
                 let final_status = if review_success {
                     ReviewStatus::Reviewed.as_str().to_string()
+                } else if any_patch_failed_to_apply {
+                    ReviewStatus::FailedToApply.as_str().to_string()
                 } else {
                     ReviewStatus::Failed.as_str().to_string()
                 };

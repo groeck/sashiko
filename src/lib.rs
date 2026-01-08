@@ -24,6 +24,7 @@ pub enum ReviewStatus {
     Cancelled,
     Reviewed,
     Failed,
+    FailedToApply,
 }
 
 impl fmt::Display for ReviewStatus {
@@ -36,6 +37,7 @@ impl fmt::Display for ReviewStatus {
             ReviewStatus::Cancelled => write!(f, "Cancelled"),
             ReviewStatus::Reviewed => write!(f, "Reviewed"),
             ReviewStatus::Failed => write!(f, "Failed"),
+            ReviewStatus::FailedToApply => write!(f, "Failed To Apply"),
         }
     }
 }
@@ -52,6 +54,7 @@ impl FromStr for ReviewStatus {
             "Cancelled" => Ok(ReviewStatus::Cancelled),
             "Reviewed" => Ok(ReviewStatus::Reviewed),
             "Failed" => Ok(ReviewStatus::Failed),
+            "Failed To Apply" => Ok(ReviewStatus::FailedToApply),
             _ => Err(()),
         }
     }
@@ -67,6 +70,7 @@ impl ReviewStatus {
             ReviewStatus::Cancelled => "Cancelled",
             ReviewStatus::Reviewed => "Reviewed",
             ReviewStatus::Failed => "Failed",
+            ReviewStatus::FailedToApply => "Failed To Apply",
         }
     }
 }

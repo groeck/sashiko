@@ -263,6 +263,7 @@ async fn get_stats(State(state): State<Arc<AppState>>) -> Json<serde_json::Value
     let reviewing = *counts.get("In Review").unwrap_or(&0); // DB uses "In Review"
     let reviewed = *counts.get("Reviewed").unwrap_or(&0);
     let failed = *counts.get("Failed").unwrap_or(&0);
+    let failed_to_apply = *counts.get("Failed To Apply").unwrap_or(&0);
     let incomplete = *counts.get("Incomplete").unwrap_or(&0);
     let cancelled = *counts.get("Cancelled").unwrap_or(&0);
 
@@ -277,6 +278,7 @@ async fn get_stats(State(state): State<Arc<AppState>>) -> Json<serde_json::Value
             "reviewing": reviewing,
             "reviewed": reviewed,
             "failed": failed,
+            "failed_to_apply": failed_to_apply,
             "incomplete": incomplete,
             "cancelled": cancelled
         }
