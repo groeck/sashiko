@@ -935,9 +935,9 @@
                         <td><div>${escapeHtml(p.subject) || '(no subject)'}</div>${tagsHtml}</td>
                         <td style="line-height:1.2;">${authorHtml}</td>
                         <td style="line-height:1.2;">${dateHtml}</td>
-                        <td style="vertical-align: middle;">${parts}</td>
-                        <td style="vertical-align: middle;"><span class="status-badge status-${p.status}">${p.status || 'Pending'}</span></td>
-                        <td style="${regStyle} vertical-align: middle;">${regText}</td>
+                        <td>${parts}</td>
+                        <td><span class="status-badge status-${p.status}">${p.status || 'Pending'}</span></td>
+                        <td style="${regStyle}">${regText}</td>
                     `;
                 } else {
                     row.onclick = (e) => {
