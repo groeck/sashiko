@@ -29,7 +29,10 @@ pub struct PatchsetRow {
     pub total_parts: Option<u32>,
     pub received_parts: Option<u32>,
     pub subsystems: Vec<String>,
-    pub regression_count: Option<i64>,
+    pub findings_low: Option<i64>,
+    pub findings_medium: Option<i64>,
+    pub findings_high: Option<i64>,
+    pub findings_critical: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -607,10 +610,52 @@ impl Database {
             }
         }
 
+        // Findings stats
+        let mut findings_data = Vec::new();
+        if let Some(sid) = subsystem_id {
+            let sql = "SELECT 
+                strftime('%Y-%m-%d', ai.created_at, 'unixepoch') as day,
+                lower(json_extract(value, '$.severity')) as severity,
+                COUNT(*) as count
+            FROM ai_interactions ai
+            JOIN reviews r ON ai.id = r.interaction_id
+            JOIN patchsets_subsystems ps ON r.patchset_id = ps.patchset_id
+            , json_each(ai.output_raw, '$.findings')
+            WHERE ps.subsystem_id = ?
+            GROUP BY day, severity
+            ORDER BY day";
+            let mut rows = self.conn.query(sql, libsql::params![sid]).await?;
+            while let Ok(Some(row)) = rows.next().await {
+                if let Ok(day) = row.get::<String>(0) {
+                    let severity: String = row.get(1).unwrap_or_else(|_| "unknown".to_string());
+                    let count: i64 = row.get(2)?;
+                    findings_data.push(json!({"day": day, "severity": severity, "count": count}));
+                }
+            }
+        } else {
+            let sql = "SELECT 
+                strftime('%Y-%m-%d', ai.created_at, 'unixepoch') as day,
+                lower(json_extract(value, '$.severity')) as severity,
+                COUNT(*) as count
+            FROM ai_interactions ai
+            , json_each(ai.output_raw, '$.findings')
+            GROUP BY day, severity
+            ORDER BY day";
+            let mut rows = self.conn.query(sql, ()).await?;
+            while let Ok(Some(row)) = rows.next().await {
+                if let Ok(day) = row.get::<String>(0) {
+                    let severity: String = row.get(1).unwrap_or_else(|_| "unknown".to_string());
+                    let count: i64 = row.get(2)?;
+                    findings_data.push(json!({"day": day, "severity": severity, "count": count}));
+                }
+            }
+        }
+
         Ok(json!({
             "messages": messages_data,
             "patchsets": patchsets_data,
-            "patches": patches_data
+            "patches": patches_data,
+            "findings": findings_data
         }))
     }
 
@@ -1458,23 +1503,21 @@ impl Database {
 
         let sql = format!(
             "SELECT p.id, p.subject, p.status, p.thread_id, p.author, p.date, p.cover_letter_message_id, p.total_parts, p.received_parts, GROUP_CONCAT(s.name, ','),
-             (
-                SELECT SUM(
-                    CASE 
-                        WHEN json_type(ai.output_raw, '$.findings') = 'array' 
-                        THEN json_array_length(ai.output_raw, '$.findings')
-                        WHEN json_type(ai.output_raw, '$.regressions') = 'array' 
-                        THEN json_array_length(ai.output_raw, '$.regressions')
-                        ELSE 0
-                    END
-                )
-                FROM reviews r 
-                JOIN ai_interactions ai ON r.interaction_id = ai.id
-                WHERE r.patchset_id = p.id
-             ) as regression_count
+             COALESCE(f.low, 0), COALESCE(f.medium, 0), COALESCE(f.high, 0), COALESCE(f.critical, 0)
              FROM patchsets p
              LEFT JOIN patchsets_subsystems ps ON p.id = ps.patchset_id
              LEFT JOIN subsystems s ON ps.subsystem_id = s.id
+             LEFT JOIN (
+                SELECT r.patchset_id,
+                    SUM(CASE WHEN lower(json_extract(value, '$.severity')) = 'low' THEN 1 ELSE 0 END) as low,
+                    SUM(CASE WHEN lower(json_extract(value, '$.severity')) = 'medium' THEN 1 ELSE 0 END) as medium,
+                    SUM(CASE WHEN lower(json_extract(value, '$.severity')) = 'high' THEN 1 ELSE 0 END) as high,
+                    SUM(CASE WHEN lower(json_extract(value, '$.severity')) = 'critical' THEN 1 ELSE 0 END) as critical
+                FROM reviews r 
+                JOIN ai_interactions ai ON r.interaction_id = ai.id
+                , json_each(ai.output_raw, '$.findings')
+                GROUP BY r.patchset_id
+             ) f ON p.id = f.patchset_id
              {} 
              GROUP BY p.id
              ORDER BY p.date DESC LIMIT ? OFFSET ?",
@@ -1513,7 +1556,10 @@ impl Database {
                 total_parts: row.get(7).ok(),
                 received_parts: row.get(8).ok(),
                 subsystems,
-                regression_count: row.get(10).ok(),
+                findings_low: row.get(10).ok(),
+                findings_medium: row.get(11).ok(),
+                findings_high: row.get(12).ok(),
+                findings_critical: row.get(13).ok(),
             });
         }
         Ok(patchsets)
@@ -1836,7 +1882,10 @@ impl Database {
                 total_parts: row.get(7).ok(),
                 received_parts: row.get(8).ok(),
                 subsystems: Vec::new(),
-                regression_count: None,
+                findings_low: None,
+                findings_medium: None,
+                findings_high: None,
+                findings_critical: None,
             });
         }
         Ok(patchsets)

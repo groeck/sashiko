@@ -802,6 +802,21 @@
             }
         }
 
+        function renderFindingsBadges(counts) {
+            const { low = 0, medium = 0, high = 0, critical = 0 } = counts;
+            if (low + medium + high + critical === 0) {
+                return '<span style="color:#2e7d32;">✓</span>';
+            }
+            return `
+                <div style="display:inline-flex; gap:6px; font-weight:bold; font-size:0.9em; vertical-align:middle;">
+                    <span style="color:${critical > 0 ? '#B71C1C' : '#eee'}" title="Critical">${critical}</span>
+                    <span style="color:${high > 0 ? '#FF5722' : '#eee'}" title="High">${high}</span>
+                    <span style="color:${medium > 0 ? '#FF9800' : '#eee'}" title="Medium">${medium}</span>
+                    <span style="color:${low > 0 ? '#FBC02D' : '#eee'}" title="Low">${low}</span>
+                </div>
+            `;
+        }
+
         function sortToolArgs(entries) {
             const priorityKeys = ['file_path', 'path', 'dir_path', 'filename', 'pattern', 'command', 'instruction', 'old_string', 'new_string', 'content', 'objective', 'fact'];
 
@@ -863,7 +878,7 @@
             if (!thead) return;
 
             if (state.listMode === 'patchsets') {
-                thead.innerHTML = `<tr><th>Subject</th><th style="width:180px">Author</th><th style="width:100px">Date</th><th style="width:50px">Parts</th><th style="width:80px">Status</th><th style="width:90px">PR</th></tr>`;
+                thead.innerHTML = `<tr><th>Subject</th><th style="width:180px">Author</th><th style="width:100px">Date</th><th style="width:50px">Parts</th><th style="width:80px">Status</th><th style="width:120px">Findings</th></tr>`;
             } else {
                 thead.innerHTML = `<tr><th>Subject</th><th style="width:180px">Author</th><th style="width:100px">Date</th><th style="width:30px"></th></tr>`;
             }
@@ -929,9 +944,16 @@
                         tagsHtml = '<div style="margin-top:2px">' + p.subsystems.map(s => `<span class="tag">${escapeHtml(s)}</span>`).join('') + '</div>';
                     }
 
-                    const regressionCount = p.regression_count || 0;
-                    const regStyle = regressionCount > 0 ? 'color:#d32f2f; font-weight:bold;' : 'color:#2e7d32;';
-                    const regText = regressionCount > 0 ? `${regressionCount}` : '-';
+                    let findingsHtml = '-';
+                    if (p.findings_low !== undefined || p.findings_medium !== undefined || p.findings_high !== undefined || p.findings_critical !== undefined) {
+                        const counts = {
+                            low: p.findings_low || 0,
+                            medium: p.findings_medium || 0,
+                            high: p.findings_high || 0,
+                            critical: p.findings_critical || 0
+                        };
+                        findingsHtml = renderFindingsBadges(counts);
+                    }
 
                     row.innerHTML = `
                         <td><div>${escapeHtml(p.subject) || '(no subject)'}</div>${tagsHtml}</td>
@@ -939,7 +961,7 @@
                         <td style="line-height:1.2;">${dateHtml}</td>
                         <td>${parts}</td>
                         <td><span class="status-badge status-${p.status}">${p.status || 'Pending'}</span></td>
-                        <td style="${regStyle}">${regText}</td>
+                        <td>${findingsHtml}</td>
                     `;
                 } else {
                     row.onclick = (e) => {
@@ -1132,28 +1154,32 @@
                         summaryStatus = '<span style="color:#888">No reviews</span>';
                     } else {
                          summaryStatus = reviews.map(r => {
-                            let count = 0;
-                            try {
-                                if (r.output) {
-                                    const out = JSON.parse(r.output);
-                                    if (out.findings?.length) count = out.findings.length;
-                                    else if (out.regressions?.length) count = out.regressions.length;
-                                }
-                            } catch (e) {}
-                            
-                            let color = '#22863a';
-                            let text = 'No issues';
+                            let findingsHtml = '<span style="color:#2e7d32; font-weight:bold">No issues</span>';
                             
                              if (r.status && (r.status.toLowerCase().includes('failed') || r.status.toLowerCase().includes('error'))) {
-                                color = '#d73a49';
-                                text = r.status;
-                             } else if (count > 0) {
-                                color = '#d73a49';
-                                text = `${count} finding${count > 1 ? 's' : ''}`;
+                                findingsHtml = `<span style="color:#d73a49; font-weight:bold">${escapeHtml(r.status)}</span>`;
+                             } else {
+                                try {
+                                    if (r.output) {
+                                        const out = JSON.parse(r.output);
+                                        if (out.findings && Array.isArray(out.findings) && out.findings.length > 0) {
+                                            let counts = { low: 0, medium: 0, high: 0, critical: 0 };
+                                            out.findings.forEach(f => {
+                                                const s = (f.severity || '').toLowerCase();
+                                                if (s === 'critical') counts.critical++;
+                                                else if (s === 'high') counts.high++;
+                                                else if (s === 'medium') counts.medium++;
+                                                else counts.low++;
+                                            });
+                                            
+                                            findingsHtml = renderFindingsBadges(counts);
+                                        }
+                                    }
+                                } catch (e) {}
                              }
                              
                              const model = r.model ? r.model.split('/').pop() : 'model';
-                             return `<div style="font-size:0.9em"><span style="font-weight:600; color:#555">${escapeHtml(model)}:</span> <span style="color:${color}; font-weight:bold">${escapeHtml(text)}</span></div>`;
+                             return `<div style="font-size:0.9em"><span style="font-weight:600; color:#555">${escapeHtml(model)}:</span> ${findingsHtml}</div>`;
                          }).join('');
                     }
                     const patchLabel = patch ? `Patch ${patch.part_index}` : `Patch ${pid}`;
@@ -1236,11 +1262,35 @@
             } catch (e) { }
 
             if (statusText === "Review completed successfully.") {
-                statusText = hasRegressions ? `${regressionCount} potential regressions` : 'No regressions';
+                if (hasRegressions && r.output) {
+                    try {
+                        const out = JSON.parse(r.output);
+                        if (out.findings && Array.isArray(out.findings)) {
+                            let counts = { low: 0, medium: 0, high: 0, critical: 0 };
+                            out.findings.forEach(f => {
+                                const s = (f.severity || '').toLowerCase();
+                                if (s === 'critical') counts.critical++;
+                                else if (s === 'high') counts.high++;
+                                else if (s === 'medium') counts.medium++;
+                                else counts.low++;
+                            });
+                            statusText = renderFindingsBadges(counts);
+                            if (!statusText.trim()) statusText = 'No regressions';
+                        } else {
+                             statusText = `${regressionCount} potential regressions`;
+                        }
+                    } catch(e) {
+                        statusText = `${regressionCount} potential regressions`;
+                    }
+                } else {
+                    statusText = 'No regressions';
+                }
             }
 
-            let resultStyle = hasRegressions ? 'color:#d32f2f;font-weight:bold;'
-                : statusText.includes('No regressions') ? 'color:#2e7d32;font-weight:bold;' : '';
+            let resultStyle = ''; 
+            if (statusText.includes('No regressions')) resultStyle = 'color:#2e7d32;font-weight:bold;';
+            else if (statusText === r.result && r.status !== 'Reviewed') resultStyle = ''; // Default style for non-success
+            else resultStyle = 'font-weight:bold;'; // Colored spans handle color
 
             let baselineStr = '-';
             if (r.baseline) {
@@ -1723,6 +1773,7 @@
                 html += '<h3>Reviews Breakdown</h3><div class="chart-section"><div id="chart-reviews" style="width:100%; height:400px;"></div></div>';
 
                 html += '<h2>Tool Usage</h2><div class="chart-section"><div id="chart-tools" style="width:100%; height:500px;"></div></div>';
+                html += '<h2>Findings Severity</h2><div class="chart-section"><div id="chart-findings" style="width:100%; height:300px;"></div></div>';
 
                 const container = document.getElementById('stats-content');
                 container.innerHTML = html;
@@ -1841,6 +1892,45 @@
                     window.addEventListener('resize', () => chart.resize());
                 } else {
                     document.getElementById('chart-tools').innerHTML = '<p class="loading">No tool usage data available.</p>';
+                }
+
+                // --- 4. Findings Chart ---
+                if (timeline.findings && timeline.findings.length) {
+                    const chart = echarts.init(document.getElementById('chart-findings'));
+                    const dates = [...new Set(timeline.findings.map(f => f.day))].sort();
+                    const severities = ['low', 'medium', 'high', 'critical'];
+                    const severityColors = {
+                        'low': '#FBC02D',
+                        'medium': '#FF9800',
+                        'high': '#FF5722',
+                        'critical': '#B71C1C'
+                    };
+
+                    const series = severities.map(sev => {
+                        return {
+                            name: sev.charAt(0).toUpperCase() + sev.slice(1),
+                            type: 'bar',
+                            stack: 'total',
+                            itemStyle: { color: severityColors[sev] },
+                            data: dates.map(d => {
+                                const entry = timeline.findings.find(f => f.day === d && f.severity === sev);
+                                return entry ? entry.count : 0;
+                            })
+                        };
+                    });
+
+                    const option = {
+                        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                        legend: { data: severities.map(s => s.charAt(0).toUpperCase() + s.slice(1)), bottom: 0 },
+                        grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
+                        xAxis: { type: 'category', data: dates, splitLine: { show: false }, axisLine: { lineStyle: { color: '#ccc' } } },
+                        yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed' } } },
+                        series: series
+                    };
+                    chart.setOption(option);
+                    window.addEventListener('resize', () => chart.resize());
+                } else {
+                    document.getElementById('chart-findings').innerHTML = '<p class="loading">No findings data available.</p>';
                 }
 
 
