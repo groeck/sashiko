@@ -43,7 +43,8 @@ impl CacheManager {
 
     /// Ensures a valid cache exists for the current content.
     /// Returns the cache resource name (e.g., "cachedContents/123...").
-    pub async fn ensure_cache(&self) -> Result<String> {
+    /// If `ignore_cache_name` is provided, any existing cache with that name will be deleted and ignored.
+    pub async fn ensure_cache(&self, ignore_cache_name: Option<&str>) -> Result<String> {
         let context_str = self.build_context().await?;
         let hash = self.calculate_hash(&context_str);
         // Short hash for readability
@@ -59,6 +60,19 @@ impl CacheManager {
             if let Some(dn) = &cache.display_name {
                 if dn == &expected_display_name && cache.model == model_name {
                     if let Some(name) = cache.name {
+                        if let Some(ignore) = ignore_cache_name {
+                            if name == ignore {
+                                tracing::warn!(
+                                    "Deleting/Ignoring cache {} as requested (likely invalid/expired)",
+                                    name
+                                );
+                                if let Err(e) = self.client.delete_cached_content(&name).await {
+                                    tracing::warn!("Failed to delete ignored cache {}: {}", name, e);
+                                }
+                                continue;
+                            }
+                        }
+
                         tracing::info!(
                             "Found existing cache: {} ({} for {})",
                             name,
@@ -150,6 +164,10 @@ mod tests {
             Ok(vec![])
         }
 
+        async fn delete_cached_content(&self, _name: &str) -> Result<()> {
+            Ok(())
+        }
+
         async fn generate_content_with_cache(
             &self,
             _request: GenerateContentWithCacheRequest,
@@ -176,7 +194,7 @@ mod tests {
             None,
         );
 
-        let res = manager.ensure_cache().await;
+        let res = manager.ensure_cache(None).await;
         assert!(res.is_ok());
 
         let request = captured
@@ -224,6 +242,10 @@ mod tests {
 
         async fn list_cached_contents(&self) -> Result<Vec<CachedContent>> {
             Ok(self.existing.clone())
+        }
+
+        async fn delete_cached_content(&self, _name: &str) -> Result<()> {
+            Ok(())
         }
 
         async fn generate_content_with_cache(
@@ -282,7 +304,7 @@ mod tests {
         );
 
         // This should trigger creation because existing cache has wrong model
-        let res = manager.ensure_cache().await;
+        let res = manager.ensure_cache(None).await;
         assert!(res.is_ok());
 
         let request = captured

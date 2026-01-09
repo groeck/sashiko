@@ -71,6 +71,10 @@ mod tests {
             Ok(vec![])
         }
 
+        async fn delete_cached_content(&self, _name: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
         async fn generate_content_with_cache(
             &self,
             _request: GenerateContentWithCacheRequest,

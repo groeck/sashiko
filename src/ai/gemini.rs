@@ -179,6 +179,8 @@ pub trait GenAiClient: Send + Sync {
 
     async fn list_cached_contents(&self) -> Result<Vec<CachedContent>>;
 
+    async fn delete_cached_content(&self, name: &str) -> Result<()>;
+
     async fn generate_content_with_cache(
         &self,
         request: GenerateContentWithCacheRequest,
@@ -462,6 +464,22 @@ impl GenAiClient for GeminiClient {
         }
     }
 
+    async fn delete_cached_content(&self, name: &str) -> Result<()> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
+            name, self.api_key
+        );
+        let res = self.client.delete(&url).send().await?;
+
+        if res.status().is_success() {
+            Ok(())
+        } else {
+            let status = res.status();
+            let err = res.text().await?;
+            anyhow::bail!("Failed to delete cached content ({}): {}", status, err);
+        }
+    }
+
     async fn generate_content_with_cache(
         &self,
         request: GenerateContentWithCacheRequest,
@@ -512,6 +530,10 @@ impl GenAiClient for StdioGeminiClient {
 
     async fn list_cached_contents(&self) -> Result<Vec<CachedContent>> {
         Ok(vec![])
+    }
+
+    async fn delete_cached_content(&self, _name: &str) -> Result<()> {
+        Ok(())
     }
 
     async fn generate_content_with_cache(

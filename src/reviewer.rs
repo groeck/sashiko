@@ -120,7 +120,7 @@ impl Reviewer {
         }
 
         // Ensure Gemini Cache
-        match self.cache_manager.ensure_cache().await {
+        match self.cache_manager.ensure_cache(None).await {
             Ok(name) => {
                 info!("Gemini Context Cache initialized: {}", name);
                 let mut guard = self.active_cache_name.lock().await;
@@ -856,7 +856,10 @@ async fn run_review_tool(
                                                         }
                                                         GeminiError::PermissionDenied(_) => {
                                                             warn!("Permission denied for cache. Refreshing cache...");
-                                                            match cache_manager.ensure_cache().await {
+                                                            match cache_manager
+                                                                .ensure_cache(Some(&current_req.cached_content))
+                                                                .await
+                                                            {
                                                                 Ok(new_name) => {
                                                                     info!("Refreshed cache: {}", new_name);
                                                                     current_req.cached_content = new_name.clone();
