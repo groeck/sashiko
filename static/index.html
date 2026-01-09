@@ -808,10 +808,10 @@
             }
             return `
                 <div style="display:inline-flex; gap:6px; font-weight:bold; font-size:0.9em; vertical-align:middle;">
-                    <span style="color:${critical > 0 ? '#B71C1C' : '#eee'}" title="Critical">${critical}</span>
-                    <span style="color:${high > 0 ? '#FF5722' : '#eee'}" title="High">${high}</span>
-                    <span style="color:${medium > 0 ? '#FF9800' : '#eee'}" title="Medium">${medium}</span>
-                    <span style="color:${low > 0 ? '#FBC02D' : '#eee'}" title="Low">${low}</span>
+                    <span style="color:${critical > 0 ? '#B71C1C' : '#999'}" title="Critical">${critical}</span>
+                    <span style="color:${high > 0 ? '#FF5722' : '#999'}" title="High">${high}</span>
+                    <span style="color:${medium > 0 ? '#FF9800' : '#999'}" title="Medium">${medium}</span>
+                    <span style="color:${low > 0 ? '#FBC02D' : '#999'}" title="Low">${low}</span>
                 </div>
             `;
         }
@@ -1128,7 +1128,7 @@
                 summaryHtml = '<table style="margin-bottom: 20px;"><thead><tr><th>Patch</th><th>Review Findings</th></tr></thead><tbody>';
             }
 
-            sortedPatchIds.forEach(pid => {
+            sortedPatchIds.forEach((pid, index) => {
                 const patch = patchMap.get(pid);
                 const reviews = reviewsByPatch.get(pid);
                 let header = patch
@@ -1138,13 +1138,18 @@
                 let totalTokens = 0;
                 reviews.forEach(r => totalTokens += (r.tokens_in || 0) + (r.tokens_out || 0));
 
+                const borderStyle = index === 0 ? '' : 'border-top:1px solid #eee; padding-top:8px;';
+
                 reviewsHtml += `
-                    <div id="patch-${pid}" style="margin-top:12px; border-top:1px solid #eee; padding-top:8px;">
+                    <div id="patch-${pid}" style="margin-top:12px; ${borderStyle}">
                         <h3 style="display:flex; justify-content:space-between;">
                             <span>${header}</span>
                             <span style="font-size:0.8em; font-weight:normal; color:#888;">Tokens: ${totalTokens.toLocaleString()}</span>
                         </h3>
                         ${renderReviewList(reviews)}
+                        <div style="text-align: right; margin-top: 8px;">
+                             <a href="javascript:void(0)" onclick="document.getElementById('ai-reviews').scrollIntoView({behavior: 'smooth'})" style="font-size: 0.85em; color: #999; text-decoration: none;">↑ Back to Summary</a>
+                        </div>
                     </div>
                 `;
 
@@ -1219,7 +1224,7 @@
                 </div>
                 
                 <div class="section">
-                    <h2>AI Reviews</h2>
+                    <h2 id="ai-reviews">AI Reviews</h2>
                     ${summaryHtml}
                     ${reviewsHtml}
                 </div>
