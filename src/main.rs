@@ -52,11 +52,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings_result = Settings::new();
 
     // Determine log level
-    // 1. CLI --debug takes precedence (implies "debug")
+    // 1. CLI --debug takes precedence (implies "info")
     // 2. Settings log_level
     // 3. Fallback to "warn" (if settings failed)
     let log_level = if cli.debug {
-        "debug"
+        "info"
     } else {
         match &settings_result {
             Ok(s) => &s.log_level,
