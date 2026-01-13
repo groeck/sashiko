@@ -428,203 +428,273 @@ impl Reviewer {
             None
         };
 
-        let review_id = ctx
-            .db
-            .create_review(
-                patchset_id,
-                Some(patch_id),
-                &ctx.settings.ai.provider,
-                &ctx.settings.ai.model,
-                baseline_id,
-                prompts_hash.as_deref(),
-            )
-            .await?;
+        let mut retries = 0;
+        let max_retries = ctx.settings.review.max_retries;
 
-        let _ = ctx
-            .db
-            .update_review_status(review_id, ReviewStatus::Applying.as_str(), None)
+        loop {
+            let review_id = ctx
+                .db
+                .create_review(
+                    patchset_id,
+                    Some(patch_id),
+                    &ctx.settings.ai.provider,
+                    &ctx.settings.ai.model,
+                    baseline_id,
+                    prompts_hash.as_deref(),
+                )
+                .await?;
+
+            let _ = ctx
+                .db
+                .update_review_status(review_id, ReviewStatus::Applying.as_str(), None)
+                .await;
+
+            let result = run_review_tool(
+                patchset_id,
+                input_payload,
+                &ctx.settings,
+                ctx.db.clone(),
+                baseline_ref,
+                Some(index),
+                ctx.quota_manager.clone(),
+                ctx.current_cache_name.as_deref(),
+                ctx.cache_manager.clone(),
+                ctx.active_cache_name.clone(),
+                review_id,
+            )
             .await;
 
-        let result = run_review_tool(
-            patchset_id,
-            input_payload,
-            &ctx.settings,
-            ctx.db.clone(),
-            baseline_ref,
-            Some(index),
-            ctx.quota_manager.clone(),
-            ctx.current_cache_name.as_deref(),
-            ctx.cache_manager.clone(),
-            ctx.active_cache_name.clone(),
-            review_id,
-        )
-        .await;
+            match result {
+                Ok(json_output) => {
+                    let patches_status = json_output["patches"].as_array();
+                    let target_applied = patches_status
+                        .and_then(|arr| arr.iter().find(|p| p["index"] == index))
+                        .map(|p| p["status"] == "applied")
+                        .unwrap_or(false);
 
-        match result {
-            Ok(json_output) => {
-                let patches_status = json_output["patches"].as_array();
-                let target_applied = patches_status
-                    .and_then(|arr| arr.iter().find(|p| p["index"] == index))
-                    .map(|p| p["status"] == "applied")
-                    .unwrap_or(false);
+                    let history = json_output.get("history");
+                    let logs_str = if let Some(h) = history {
+                        serde_json::to_string_pretty(h).ok()
+                    } else {
+                        None
+                    };
 
-                let history = json_output.get("history");
-                let logs_str = if let Some(h) = history {
-                    serde_json::to_string_pretty(h).ok()
-                } else {
-                    None
-                };
-
-                if let Some(h) = history.and_then(|h| h.as_array()) {
-                    for item in h {
-                        if let Some(parts) = item.get("parts").and_then(|p| p.as_array()) {
-                            for part in parts {
-                                if let Some(call) = part.get("functionCall") {
-                                    let name = call["name"].as_str().unwrap_or("unknown");
-                                    let args = call["args"].to_string();
-                                    let _ = ctx
-                                        .db
-                                        .create_tool_usage(ToolUsage {
-                                            review_id,
-                                            provider: ctx.settings.ai.provider.clone(),
-                                            model: ctx.settings.ai.model.clone(),
-                                            tool_name: name.to_string(),
-                                            arguments: Some(args),
-                                            output_length: 0,
-                                        })
-                                        .await;
+                    if let Some(h) = history.and_then(|h| h.as_array()) {
+                        for item in h {
+                            if let Some(parts) = item.get("parts").and_then(|p| p.as_array()) {
+                                for part in parts {
+                                    if let Some(call) = part.get("functionCall") {
+                                        let name = call["name"].as_str().unwrap_or("unknown");
+                                        let args = call["args"].to_string();
+                                        let _ = ctx
+                                            .db
+                                            .create_tool_usage(ToolUsage {
+                                                review_id,
+                                                provider: ctx.settings.ai.provider.clone(),
+                                                model: ctx.settings.ai.model.clone(),
+                                                tool_name: name.to_string(),
+                                                arguments: Some(args),
+                                                output_length: 0,
+                                            })
+                                            .await;
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // Always try to record AI interaction stats if available, even on failure
-                let interaction_id = if let Some(tokens_in) = json_output["tokens_in"].as_u64() {
-                    let i_id = generate_id();
-                    let input_ctx = json_output["input_context"].as_str().unwrap_or("");
-                    let output_raw = if let Some(r) = json_output.get("review") {
-                        r.to_string()
-                    } else if let Some(e) = json_output.get("error") {
-                        e.to_string()
-                    } else {
-                        String::new()
-                    };
+                    // Always try to record AI interaction stats if available, even on failure
+                    let interaction_id = if let Some(tokens_in) = json_output["tokens_in"].as_u64() {
+                        let i_id = generate_id();
+                        let input_ctx = json_output["input_context"].as_str().unwrap_or("");
+                        let output_raw = if let Some(r) = json_output.get("review") {
+                            r.to_string()
+                        } else if let Some(e) = json_output.get("error") {
+                            e.to_string()
+                        } else {
+                            String::new()
+                        };
 
-                    let _ = ctx
-                        .db
-                        .create_ai_interaction(AiInteractionParams {
-                            id: &i_id,
-                            parent_id: None,
-                            workflow_id: None,
-                            provider: &ctx.settings.ai.provider,
-                            model: &ctx.settings.ai.model,
-                            input: input_ctx,
-                            output: &output_raw,
-                            tokens_in: tokens_in as u32,
-                            tokens_out: json_output["tokens_out"].as_u64().unwrap_or(0) as u32,
-                            tokens_cached: json_output["tokens_cached"].as_u64().unwrap_or(0) as u32,
-                        })
-                        .await;
-                    Some(i_id)
-                } else {
-                    None
-                };
-
-                if target_applied {
-                    if let Some(error_msg) = json_output["error"].as_str() {
-                        error!(
-                            "Review tool returned error for ps={} idx={}: {}",
-                            patchset_id, index, error_msg
-                        );
                         let _ = ctx
                             .db
-                            .complete_review(
-                                review_id,
-                                ReviewStatus::Failed.as_str(),
-                                error_msg,
-                                None,
-                                interaction_id.as_deref(),
-                                None,
-                                logs_str.as_deref(),
-                            )
+                            .create_ai_interaction(AiInteractionParams {
+                                id: &i_id,
+                                parent_id: None,
+                                workflow_id: None,
+                                provider: &ctx.settings.ai.provider,
+                                model: &ctx.settings.ai.model,
+                                input: input_ctx,
+                                output: &output_raw,
+                                tokens_in: tokens_in as u32,
+                                tokens_out: json_output["tokens_out"].as_u64().unwrap_or(0) as u32,
+                                tokens_cached: json_output["tokens_cached"].as_u64().unwrap_or(0)
+                                    as u32,
+                            })
                             .await;
-                        return Ok(PatchResult::ReviewFailed);
-                    } else if let Some(review_content) = json_output.get("review") {
-                        if !review_content.is_null() {
-                            // Parse and save findings
-                            if let Some(findings_arr) = review_content.get("findings").and_then(|f| f.as_array()) {
-                                for f in findings_arr {
-                                    let file_path = f["file"].as_str().unwrap_or("unknown").to_string();
-                                    let line_number = f["line"].as_i64().unwrap_or(0);
-                                    let severity_str = f["severity"].as_str().unwrap_or("Low");
-                                    let message = f["message"].as_str().unwrap_or("").to_string();
-                                    let suggestion = f["suggestion"].as_str().map(|s| s.to_string());
+                        Some(i_id)
+                    } else {
+                        None
+                    };
 
-                                    let severity = Severity::from_str(severity_str);
-
-                                    let _ = ctx.db.create_finding(Finding {
-                                        review_id,
-                                        file_path,
-                                        line_number,
-                                        severity,
-                                        message,
-                                        suggestion,
-                                    }).await;
-                                }
-                            }
-
-                            let summary = review_content["summary"]
-                                .as_str()
-                                .unwrap_or("No summary available.")
-                                .to_string();
-                            let result_desc = "Review completed successfully.";
-
-                            let inline_review = json_output["inline_review"].as_str();
-
-                            let _ = ctx
-                                .db
-                                .complete_review(
-                                    review_id,
-                                    ReviewStatus::Reviewed.as_str(),
-                                    result_desc,
-                                    Some(&summary),
-                                    interaction_id.as_deref(),
-                                    inline_review,
-                                    logs_str.as_deref(),
-                                )
-                                .await;
-                            return Ok(PatchResult::Success);
-                        } else {
+                    if target_applied {
+                        if let Some(error_msg) = json_output["error"].as_str() {
+                            error!(
+                                "Review tool returned error for ps={} idx={}: {}",
+                                patchset_id, index, error_msg
+                            );
                             let _ = ctx
                                 .db
                                 .complete_review(
                                     review_id,
                                     ReviewStatus::Failed.as_str(),
-                                    "AI returned null response",
+                                    error_msg,
                                     None,
                                     interaction_id.as_deref(),
                                     None,
                                     logs_str.as_deref(),
                                 )
                                 .await;
-                            return Ok(PatchResult::ReviewFailed);
+
+                            if retries < max_retries {
+                                retries += 1;
+                                warn!(
+                                    "AI failed for ps={} idx={}. Retrying (attempt {}/{})...",
+                                    patchset_id, index, retries, max_retries
+                                );
+                                continue;
+                            } else {
+                                return Ok(PatchResult::ReviewFailed);
+                            }
+                        } else if let Some(review_content) = json_output.get("review") {
+                            if !review_content.is_null() {
+                                // Parse and save findings
+                                if let Some(findings_arr) =
+                                    review_content.get("findings").and_then(|f| f.as_array())
+                                {
+                                    for f in findings_arr {
+                                        let file_path =
+                                            f["file"].as_str().unwrap_or("unknown").to_string();
+                                        let line_number = f["line"].as_i64().unwrap_or(0);
+                                        let severity_str =
+                                            f["severity"].as_str().unwrap_or("Low");
+                                        let message =
+                                            f["message"].as_str().unwrap_or("").to_string();
+                                        let suggestion =
+                                            f["suggestion"].as_str().map(|s| s.to_string());
+
+                                        let severity = Severity::from_str(severity_str);
+
+                                        let _ = ctx
+                                            .db
+                                            .create_finding(Finding {
+                                                review_id,
+                                                file_path,
+                                                line_number,
+                                                severity,
+                                                message,
+                                                suggestion,
+                                            })
+                                            .await;
+                                    }
+                                }
+
+                                let summary = review_content["summary"]
+                                    .as_str()
+                                    .unwrap_or("No summary available.")
+                                    .to_string();
+                                let result_desc = "Review completed successfully.";
+
+                                let inline_review = json_output["inline_review"].as_str();
+
+                                let _ = ctx
+                                    .db
+                                    .complete_review(
+                                        review_id,
+                                        ReviewStatus::Reviewed.as_str(),
+                                        result_desc,
+                                        Some(&summary),
+                                        interaction_id.as_deref(),
+                                        inline_review,
+                                        logs_str.as_deref(),
+                                    )
+                                    .await;
+                                return Ok(PatchResult::Success);
+                            } else {
+                                let _ = ctx
+                                    .db
+                                    .complete_review(
+                                        review_id,
+                                        ReviewStatus::Failed.as_str(),
+                                        "AI returned null response",
+                                        None,
+                                        interaction_id.as_deref(),
+                                        None,
+                                        logs_str.as_deref(),
+                                    )
+                                    .await;
+                                if retries < max_retries {
+                                    retries += 1;
+                                    warn!(
+                                        "AI failed for ps={} idx={}. Retrying (attempt {}/{})...",
+                                        patchset_id, index, retries, max_retries
+                                    );
+                                    continue;
+                                } else {
+                                    return Ok(PatchResult::ReviewFailed);
+                                }
+                            }
+                        } else {
+                            let error_msg = json_output["error"]
+                                .as_str()
+                                .unwrap_or("Missing review content");
+
+                            error!(
+                                "Review tool returned no content for ps={} idx={}. Error: {}",
+                                patchset_id, index, error_msg
+                            );
+
+                            let _ = ctx
+                                .db
+                                .complete_review(
+                                    review_id,
+                                    ReviewStatus::Failed.as_str(),
+                                    error_msg,
+                                    None,
+                                    interaction_id.as_deref(),
+                                    None,
+                                    logs_str.as_deref(),
+                                )
+                                .await;
+                            if retries < max_retries {
+                                retries += 1;
+                                warn!(
+                                    "Review content missing for ps={} idx={}. Retrying (attempt {}/{})...",
+                                    patchset_id, index, retries, max_retries
+                                );
+                                continue;
+                            } else {
+                                return Ok(PatchResult::ReviewFailed);
+                            }
                         }
                     } else {
+                        let patches_debug = serde_json::to_string_pretty(&json_output["patches"])
+                            .unwrap_or_default();
                         let error_msg = json_output["error"]
                             .as_str()
-                            .unwrap_or("Missing review content");
-
-                        error!(
-                            "Review tool returned no content for ps={} idx={}. Error: {}",
-                            patchset_id, index, error_msg
-                        );
-
+                            .unwrap_or("Patch application failed");
+                        let _ = ctx
+                            .db
+                            .update_review_status(
+                                review_id,
+                                ReviewStatus::FailedToApply.as_str(),
+                                Some(&patches_debug),
+                            )
+                            .await;
                         let _ = ctx
                             .db
                             .complete_review(
                                 review_id,
-                                ReviewStatus::Failed.as_str(),
+                                ReviewStatus::FailedToApply.as_str(),
                                 error_msg,
                                 None,
                                 interaction_id.as_deref(),
@@ -632,53 +702,34 @@ impl Reviewer {
                                 logs_str.as_deref(),
                             )
                             .await;
-                        return Ok(PatchResult::ReviewFailed);
+
+                        return Ok(PatchResult::ApplyFailed);
                     }
-                } else {
-                    let patches_debug = serde_json::to_string_pretty(&json_output["patches"])
-                        .unwrap_or_default();
-                    let error_msg = json_output["error"]
-                        .as_str()
-                        .unwrap_or("Patch application failed");
-                    let _ = ctx
-                        .db
-                        .update_review_status(
-                            review_id,
-                            ReviewStatus::FailedToApply.as_str(),
-                            Some(&patches_debug),
-                        )
-                        .await;
+                }
+                Err(e) => {
+                    error!("Review execution failed for {}: {}", patchset_id, e);
                     let _ = ctx
                         .db
                         .complete_review(
                             review_id,
-                            ReviewStatus::FailedToApply.as_str(),
-                            error_msg,
+                            ReviewStatus::Failed.as_str(),
+                            &format!("Tool error: {}", e),
                             None,
-                            interaction_id.as_deref(),
                             None,
-                            logs_str.as_deref(),
+                            None,
+                            None,
                         )
                         .await;
-
-                    return Ok(PatchResult::ApplyFailed);
+                    if retries < max_retries {
+                        retries += 1;
+                        warn!(
+                            "Tool execution failed for ps={} idx={}. Retrying (attempt {}/{})...",
+                            patchset_id, index, retries, max_retries
+                        );
+                        continue;
+                    }
+                    return Ok(PatchResult::ReviewFailed);
                 }
-            }
-            Err(e) => {
-                error!("Review execution failed for {}: {}", patchset_id, e);
-                let _ = ctx
-                    .db
-                    .complete_review(
-                        review_id,
-                        ReviewStatus::Failed.as_str(),
-                        &format!("Tool error: {}", e),
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                    .await;
-                return Ok(PatchResult::ReviewFailed);
             }
         }
     }
