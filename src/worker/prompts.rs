@@ -15,6 +15,8 @@ const EXCLUDED_FILES: &[&str] = &[
     "README.md",
     "review-one.md",
     "review-stat.md",
+    "technical-patterns.md",
+    "severity.md",
 ];
 
 pub struct PromptRegistry {
@@ -94,6 +96,22 @@ impl PromptRegistry {
         let core_path = self.base_dir.join("review-core.md");
         if core_path.exists() {
             context.push_str(&fs::read_to_string(&core_path).await?);
+            context.push_str("\n\n");
+        }
+
+        // Technical patterns
+        let tech_path = self.base_dir.join("technical-patterns.md");
+        if tech_path.exists() {
+            context.push_str("## technical-patterns.md\n");
+            context.push_str(&fs::read_to_string(&tech_path).await?);
+            context.push_str("\n\n");
+        }
+
+        // Severity guidelines
+        let sev_path = self.base_dir.join("severity.md");
+        if sev_path.exists() {
+            context.push_str("## severity.md\n");
+            context.push_str(&fs::read_to_string(&sev_path).await?);
             context.push_str("\n\n");
         }
 
