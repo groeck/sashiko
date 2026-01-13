@@ -48,7 +48,7 @@ fn default_rate_limit_tokens_per_minute() -> usize {
 }
 
 fn default_max_interactions() -> usize {
-    25
+    100
 }
 
 #[derive(Debug, Deserialize, Clone)]
