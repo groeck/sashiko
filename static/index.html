@@ -1332,23 +1332,31 @@
                 `;
             }
 
+            const statusRaw = r.status || 'Finished';
+            const s = statusRaw.toLowerCase();
+            const showDetails = s === 'reviewed' || s === 'finished' || s === 'failed';
+
             return `
                 <div class="review-card">
                     <div class="review-meta">
                         <div class="review-meta-label">Date:</div>
                         <div style="display:flex; justify-content:space-between;">
                             <span>${rDate}</span>
-                            <span class="status-badge status-${r.status?.split(' ')[0] || 'Finished'}">${r.status || 'Finished'}</span>
+                            <span class="status-badge status-${statusRaw.split(' ')[0]}">${statusRaw}</span>
                         </div>
                         <div class="review-meta-label">Baseline:</div><div>${baselineStr}</div>
                         <div class="review-meta-label">Model:</div><div>${providerModel}</div>
+                        ${showDetails ? `
                         <div class="review-meta-sep"></div>
                         <div class="review-meta-label">Result:</div><div>${displayResult}</div>
                         <div class="review-meta-label">Tokens:</div><div>${tokenStr}</div>
+                        ` : ''}
                     </div>
+                    ${showDetails ? `
                     ${inlineHtml}
                     ${traceHtml}
                     <div style="margin-top:8px;"><a href="#/log/${r.id}" class="toggle-btn">View Raw Log</a></div>
+                    ` : ''}
                 </div>
             `;
         }
