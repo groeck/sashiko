@@ -440,6 +440,18 @@ impl Reviewer {
             return Ok(PatchResult::Success);
         }
 
+        if ctx
+            .db
+            .has_failed_review(patchset_id, patch_id, baseline_id)
+            .await?
+        {
+            info!(
+                "Patch {}/{} (ID: {}) previously failed with baseline {:?} before AI stage. Skipping.",
+                patchset_id, index, patch_id, baseline_id
+            );
+            return Ok(PatchResult::ReviewFailed);
+        }
+
         let mut retries = 0;
         let max_retries = ctx.settings.review.max_retries;
 
@@ -813,9 +825,9 @@ async fn run_review_tool(
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
-            while let Ok(Some(_line)) = lines.next_line().await {
+            while let Ok(Some(line)) = lines.next_line().await {
                 // Forward stderr to our log (or warn)
-                // warn!("[review-bin] {}", line); // Too noisy?
+                warn!("[review-bin] {}", line); // Too noisy?
             }
         });
     }

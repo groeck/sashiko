@@ -417,6 +417,31 @@ impl Database {
         Ok(rows.next().await.ok().flatten().is_some())
     }
 
+    pub async fn has_failed_review(
+        &self,
+        patchset_id: i64,
+        patch_id: i64,
+        baseline_id: Option<i64>,
+    ) -> Result<bool> {
+        let mut rows = if let Some(bid) = baseline_id {
+            self.conn
+                .query(
+                    "SELECT 1 FROM reviews WHERE patchset_id = ? AND patch_id = ? AND baseline_id = ? AND status IN ('Failed', 'FailedToApply') AND interaction_id IS NULL",
+                    libsql::params![patchset_id, patch_id, bid],
+                )
+                .await?
+        } else {
+            self.conn
+                .query(
+                    "SELECT 1 FROM reviews WHERE patchset_id = ? AND patch_id = ? AND baseline_id IS NULL AND status IN ('Failed', 'FailedToApply') AND interaction_id IS NULL",
+                    libsql::params![patchset_id, patch_id],
+                )
+                .await?
+        };
+
+        Ok(rows.next().await.ok().flatten().is_some())
+    }
+
     pub async fn update_review_status(
         &self,
         review_id: i64,
@@ -3307,5 +3332,56 @@ mod tests {
         let cached: u32 = row.get(0).unwrap();
 
         assert_eq!(cached, 25);
+    }
+
+    #[tokio::test]
+    async fn test_has_failed_review_logic() {
+        let db = setup_db().await;
+        
+        // Setup patchset
+        let thread_id = db.create_thread("root", "Subject", 100).await.unwrap();
+        db.create_message("msg1", thread_id, None, "Author", "Subject", 100, "", "", "", None, None).await.unwrap();
+        let ps_id = db.create_patchset(thread_id, Some("msg1"), "Subject", "Author", 100, 1, 1, "", "", None, 1, None).await.unwrap().unwrap();
+        let patch_id = db.create_patch(ps_id, "msg1", 1, "diff").await.unwrap();
+
+        // 1. Initial State: No reviews
+        assert!(!db.has_failed_review(ps_id, patch_id, None).await.unwrap());
+
+        // 2. Failed Review (No interaction) -> Should be detected
+        let review_id = db.create_review(ps_id, Some(patch_id), "p", "m", None, None).await.unwrap();
+        db.update_review_status(review_id, "FailedToApply", None).await.unwrap();
+        
+        assert!(db.has_failed_review(ps_id, patch_id, None).await.unwrap());
+
+        // 3. Status "Failed" (No interaction) -> Should be detected
+        db.update_review_status(review_id, "Failed", None).await.unwrap();
+        assert!(db.has_failed_review(ps_id, patch_id, None).await.unwrap());
+
+        // 4. Status "Reviewed" (Success) -> Should NOT be detected
+        db.update_review_status(review_id, "Reviewed", None).await.unwrap();
+        assert!(!db.has_failed_review(ps_id, patch_id, None).await.unwrap());
+
+        // 5. Status "Failed" WITH interaction_id -> Should NOT be detected (reached AI)
+        // Revert to Failed first
+        db.update_review_status(review_id, "Failed", None).await.unwrap();
+        
+        // Create interaction first to satisfy FK
+        db.create_ai_interaction(AiInteractionParams {
+            id: "int_id",
+            parent_id: None,
+            workflow_id: None,
+            provider: "p",
+            model: "m",
+            input: "",
+            output: "",
+            tokens_in: 0,
+            tokens_out: 0,
+            tokens_cached: 0,
+        }).await.unwrap();
+
+        // Set interaction_id
+        db.complete_review(review_id, "Failed", "desc", None, Some("int_id"), None, None).await.unwrap();
+        
+        assert!(!db.has_failed_review(ps_id, patch_id, None).await.unwrap());
     }
 }
