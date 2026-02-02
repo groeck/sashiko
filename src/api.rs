@@ -4,7 +4,7 @@ use crate::fetcher::FetchRequest;
 use crate::settings::ServerSettings;
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::StatusCode,
     routing::{get, get_service, post},
 };
@@ -115,7 +115,11 @@ pub async fn run_server(
     info!("Web API listening on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -136,9 +140,15 @@ fn generate_synthetic_id(prefix: &str) -> String {
 }
 
 async fn submit_patch(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SubmitRequest>,
 ) -> Result<Json<SubmitResponse>, StatusCode> {
+    if !addr.ip().is_loopback() {
+        info!("Refused patch submission from non-localhost: {}", addr);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     match payload {
         SubmitRequest::Local {
             author,
