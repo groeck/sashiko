@@ -1385,6 +1385,7 @@ impl Database {
         &self,
         thread_id: i64,
         cover_letter_message_id: Option<&str>,
+        message_id: &str,
         subject: &str,
         author: &str,
         date: i64,
@@ -1447,7 +1448,7 @@ impl Database {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, date, author, subject, subject_index, total_parts, received_parts FROM patchsets 
+                "SELECT id, date, author, subject, subject_index, total_parts, received_parts, cover_letter_message_id FROM patchsets 
                  WHERE thread_id = ? OR (author = ? AND date BETWEEN ? AND ?)",
                 libsql::params![thread_id, author, window_start, window_end],
             )
@@ -1463,10 +1464,29 @@ impl Database {
             let existing_subject_index: u32 = row.get(4).unwrap_or(9999);
             let existing_total: u32 = row.get(5).unwrap_or(1);
             let existing_received: u32 = row.get(6).unwrap_or(0);
+            let existing_cover_id: Option<String> = row.get(7).ok();
 
-            // If the patchset is already full, do not merge more patches into it.
+            // Check if this message is already part of this patchset (Duplicate processing)
+            // 1. Is it the cover letter?
+            let is_cover_duplicate = existing_cover_id.as_deref() == Some(message_id);
+            
+            // 2. Is it an existing patch?
+            let is_patch_duplicate = if !is_cover_duplicate {
+                let mut p_rows = self.conn.query(
+                    "SELECT 1 FROM patches WHERE patchset_id = ? AND message_id = ?",
+                    libsql::params![id, message_id]
+                ).await?;
+                p_rows.next().await.ok().flatten().is_some()
+            } else {
+                false
+            };
+            
+            let is_duplicate = is_cover_duplicate || is_patch_duplicate;
+
+            // If the patchset is already full, do not merge more patches into it,
+            // UNLESS it is a duplicate of a message already in the set.
             // This prevents merging unrelated patchsets that happen to look similar (same author/size).
-            if existing_received >= existing_total {
+            if existing_received >= existing_total && !is_duplicate {
                 continue;
             }
 
@@ -2394,6 +2414,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg1",
                 "Patch 1",
                 "Author A",
                 1000,
@@ -2431,6 +2452,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 Some("root"),
+                "root",
                 "Cover Letter",
                 "Author A",
                 1005,
@@ -2460,6 +2482,7 @@ mod tests {
         db.create_patchset(
             thread_id,
             None,
+            "msg2",
             "Patch 2",
             "Author A",
             1006,
@@ -2484,6 +2507,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_other",
                 "Other Author",
                 "Author B",
                 1000,
@@ -2507,6 +2531,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_v2",
                 "[PATCH v2] Patchset 1",
                 "Author B",
                 1002,
@@ -2542,6 +2567,7 @@ mod tests {
             .create_patchset(
                 t_merge,
                 None,
+                "m1",
                 "Series",
                 "Merger",
                 10000,
@@ -2568,6 +2594,7 @@ mod tests {
             .create_patchset(
                 t_merge,
                 None,
+                "m2",
                 "Series",
                 "Merger",
                 200000,
@@ -2609,6 +2636,7 @@ mod tests {
             .create_patchset(
                 t_merge,
                 None,
+                "m2_fixed",
                 "Series",
                 "Merger",
                 120000,
@@ -2638,6 +2666,7 @@ mod tests {
             .create_patchset(
                 t_merge,
                 None,
+                "m3",
                 "Series",
                 "Merger",
                 65000,
@@ -2684,6 +2713,7 @@ mod tests {
                 .create_patchset(
                     thread_id,
                     if idx == 0 { Some(&msg_id) } else { None },
+                    &msg_id,
                     &subject,
                     author,
                     time,
@@ -2736,6 +2766,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_status",
                 "Status Test",
                 author,
                 60000,
@@ -2810,6 +2841,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 Some("msg_00"),
+                "msg_00",
                 "[PATCH 00/33 v6] Cover",
                 author,
                 30000,
@@ -2846,6 +2878,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_01",
                 "[PATCH 01/33] Part 1",
                 author,
                 30005,
@@ -2898,6 +2931,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_a",
                 "[PATCH] Fix A",
                 author,
                 60000,
@@ -2934,6 +2968,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_b",
                 "[PATCH] Fix B",
                 author,
                 60005,
@@ -2985,6 +3020,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 Some("msg_0"),
+                "msg_0",
                 "[PATCH 0/1] Subject A",
                 author,
                 60000,
@@ -3021,6 +3057,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_1",
                 "[PATCH 1/1] Subject B",
                 author,
                 60005,
@@ -3072,6 +3109,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_v5",
                 "[PATCH v5 1/2] Part 1",
                 author,
                 40000,
@@ -3108,6 +3146,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_v6",
                 "[PATCH v6 1/2] Part 1",
                 author,
                 40010,
@@ -3159,6 +3198,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 Some("v3_0"),
+                "v3_0",
                 "[PATCH v3 0/2] Cover",
                 author,
                 50000,
@@ -3195,6 +3235,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "v3_1",
                 "[PATCH v3 1/2] Part 1",
                 author,
                 50005,
@@ -3231,6 +3272,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "v3_2",
                 "[PATCH v3 2/2] Part 2",
                 author,
                 50010,
@@ -3280,6 +3322,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 Some("msg_v3_conf_00"),
+                "msg_v3_conf_00",
                 "[PATCH v3 00/17] Cover",
                 author,
                 80000,
@@ -3322,7 +3365,7 @@ mod tests {
 
         let ps_part1 = db
             .create_patchset(
-                thread_id, None, subject, author, 80005, 17, 1, "", "",
+                thread_id, None, "msg_conf_01", subject, author, 80005, 17, 1, "", "",
                 parsed_ver, // Pass the result of the potentially buggy parser
                 1, None, true,
             )
@@ -3365,6 +3408,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_deps_1",
                 "[PATCH 1/2] Part 1",
                 author,
                 90000,
@@ -3423,6 +3467,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 None,
+                "msg_deps_2",
                 "[PATCH 2/2] Part 2",
                 author,
                 90005, // Close enough
@@ -3534,6 +3579,7 @@ mod tests {
             .create_patchset(
                 thread_id,
                 Some("msg1"),
+                "msg1",
                 "Subject",
                 "Author",
                 100,
@@ -3643,6 +3689,7 @@ mod tests {
             .create_patchset(
                 t1,
                 None,
+                "msg1",
                 "[PATCH 1/2] Series",
                 "Author",
                 1000,
@@ -3684,6 +3731,7 @@ mod tests {
             .create_patchset(
                 t2,
                 None,
+                "msg2",
                 "[PATCH 2/2] Series",
                 "Author",
                 1005,
@@ -3713,5 +3761,132 @@ mod tests {
 
         let details = db.get_patchset_details(ps1).await.unwrap().unwrap();
         assert_eq!(details["received_parts"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_ingestion_on_full_patchset() {
+        let db = setup_db().await;
+
+        // 1. Create Patchset (1/1)
+        let t1 = db
+            .create_thread("root1", "Subject", 1000)
+            .await
+            .unwrap();
+        let msg_id = "msg1";
+        
+        db.create_message(
+            msg_id,
+            t1,
+            None,
+            "Author",
+            "[PATCH 1/1] Subject",
+            1000,
+            "",
+            "",
+            "",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let ps1 = db
+            .create_patchset(
+                t1,
+                None,
+                msg_id,
+                "[PATCH 1/1] Subject",
+                "Author",
+                1000,
+                1,
+                0,
+                "",
+                "",
+                None,
+                1,
+                None,
+                true,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        // 2. Add patch so it becomes full
+        db.create_patch(ps1, msg_id, 1, "diff").await.unwrap();
+
+        let details = db.get_patchset_details(ps1).await.unwrap().unwrap();
+        assert_eq!(details["received_parts"], 1);
+        assert_eq!(details["total_parts"], 1);
+
+        // 3. Try to ingest the SAME patch again
+        // It matches the existing patchset (Author/Time/Thread).
+        // It IS full (1/1).
+        // But it IS a duplicate (msg_id matches).
+        // So it SHOULD merge.
+        let ps2 = db
+            .create_patchset(
+                t1,
+                None,
+                msg_id,
+                "[PATCH 1/1] Subject",
+                "Author",
+                1000,
+                1,
+                0,
+                "",
+                "",
+                None,
+                1,
+                None,
+                true,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(ps1, ps2, "Should merge duplicate into existing patchset even if full");
+
+        // 4. Try to ingest a NEW patch (different ID) that looks like it belongs
+        // This simulates a collision or a separate series with same metadata.
+        // It should NOT merge because the set is full and it's NOT a duplicate.
+        let msg_id_new = "msg_new";
+         db.create_message(
+            msg_id_new,
+            t1,
+            None,
+            "Author",
+            "[PATCH 1/1] Subject",
+            1000,
+            "",
+            "",
+            "",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let ps3 = db
+            .create_patchset(
+                t1,
+                None,
+                msg_id_new,
+                "[PATCH 1/1] Subject",
+                "Author",
+                1000,
+                1,
+                0,
+                "",
+                "",
+                None,
+                1,
+                None,
+                true,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(ps1, ps3, "Should create NEW patchset for non-duplicate when full");
     }
 }

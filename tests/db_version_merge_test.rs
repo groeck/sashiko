@@ -26,6 +26,7 @@ async fn test_merge_different_versions_should_fail() {
         .create_patchset(
             t1,
             None,
+            "msg1",
             "[PATCH] Fix something",
             "Author",
             1000,
@@ -50,6 +51,7 @@ async fn test_merge_different_versions_should_fail() {
         .create_patchset(
             t1,
             None,
+            "msg2",
             "[PATCH v2] Fix something",
             "Author",
             1010,
@@ -86,6 +88,7 @@ async fn test_merge_same_versions_should_merge() {
         .create_patchset(
             t1,
             None,
+            "msg3",
             "[PATCH v2] Fix something",
             "Author",
             2000,
@@ -108,6 +111,7 @@ async fn test_merge_same_versions_should_merge() {
         .create_patchset(
             t1,
             None,
+            "msg4",
             "[PATCH v2] Fix something",
             "Author",
             2010,
@@ -147,6 +151,7 @@ async fn test_merge_different_versions_series_should_fail() {
         .create_patchset(
             t1,
             None,
+            "msg5",
             "[PATCH 1/2] Fix something",
             "Author",
             3000,
@@ -170,6 +175,7 @@ async fn test_merge_different_versions_series_should_fail() {
         .create_patchset(
             t1,
             None,
+            "msg6",
             "[PATCH v2 1/2] Fix something",
             "Author",
             3010,

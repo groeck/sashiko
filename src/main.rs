@@ -622,6 +622,7 @@ async fn process_parsed_article(worker_db: &Database, article: ParsedArticle) ->
             .create_patchset(
                 thread_id,
                 cover_letter_id,
+                metadata.message_id.as_str(),
                 &subject,
                 &author,
                 metadata.date,
