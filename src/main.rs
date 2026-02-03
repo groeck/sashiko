@@ -196,22 +196,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         index,
                         total,
                     } => {
+                        let root_msg_id = format!("{}@sashiko.local", article_id);
+
                         // Pre-parsed patch handling
                         let metadata = sashiko::patch::PatchsetMetadata {
                             message_id: message_id.clone(),
                             subject,
                             author,
                             date: timestamp,
-                            in_reply_to: if message_id != article_id {
-                                Some(article_id.clone())
-                            } else {
-                                None
-                            },
-                            references: if message_id != article_id {
-                                vec![article_id.clone()]
-                            } else {
-                                vec![]
-                            },
+                            in_reply_to: Some(root_msg_id.clone()),
+                            references: vec![root_msg_id.clone()],
                             index,
                             total,
                             to: "submitted".to_string(),
@@ -590,10 +584,13 @@ async fn process_parsed_article(worker_db: &Database, article: ParsedArticle) ->
     );
     */
 
-    let cover_letter_id = if metadata.index == 0 || metadata.total == 1 {
+    let root_msg_id = format!("{}@sashiko.local", article_id);
+    let cover_letter_id = if group == "git-fetch" || group == "api-submit" {
+        Some(root_msg_id.as_str())
+    } else if metadata.index == 0 || metadata.total == 1 {
         Some(metadata.message_id.as_str())
     } else {
-        None
+        metadata.in_reply_to.as_deref()
     };
 
     if metadata.is_patch_or_cover {

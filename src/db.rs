@@ -2176,15 +2176,38 @@ impl Database {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
 
-        // 1. Ensure a placeholder thread and message exist to satisfy Foreign Key constraints
-        let thread_id = self.ensure_thread_for_message(article_id, now).await?;
+        let root_msg_id = format!("{}@sashiko.local", article_id);
 
-        // 2. Create the fetching patchset
+        // 1. Check if it already exists
+        let mut rows = self.conn.query(
+            "SELECT id, status FROM patchsets WHERE cover_letter_message_id = ?",
+            libsql::params![root_msg_id.clone()]
+        ).await?;
+
+        if let Ok(Some(row)) = rows.next().await {
+            let id: i64 = row.get(0)?;
+            let status: String = row.get(1).unwrap_or_default();
+            
+            // Only reset to Fetching if it failed or is currently fetching.
+            // We don't want to reset if it is already Incomplete, Pending, or Reviewed.
+            if status == "Failed" || status == "Fetching" {
+                self.conn.execute(
+                    "UPDATE patchsets SET status = 'Fetching', failed_reason = NULL WHERE id = ?",
+                    libsql::params![id]
+                ).await?;
+            }
+            return Ok(id);
+        }
+
+        // 2. Ensure a placeholder thread and message exist to satisfy Foreign Key constraints
+        let thread_id = self.ensure_thread_for_message(&root_msg_id, now).await?;
+
+        // 3. Create the fetching patchset
         self.conn
             .execute(
                 "INSERT INTO patchsets (thread_id, cover_letter_message_id, subject, status, date) 
                      VALUES (?, ?, ?, 'Fetching', ?)",
-                libsql::params![thread_id, article_id, subject, now],
+                libsql::params![thread_id, root_msg_id, subject, now],
             )
             .await?;
 
@@ -2199,10 +2222,11 @@ impl Database {
         }
     }
     pub async fn update_patchset_error(&self, article_id: &str, error: &str) -> Result<()> {
+        let root_msg_id = format!("{}@sashiko.local", article_id);
         self.conn
             .execute(
                 "UPDATE patchsets SET status = 'Failed', failed_reason = ? WHERE cover_letter_message_id = ?",
-                libsql::params![error, article_id],
+                libsql::params![error, root_msg_id],
             )
             .await?;
         Ok(())
