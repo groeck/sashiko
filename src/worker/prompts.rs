@@ -21,7 +21,8 @@ use tokio::fs;
 pub const SYSTEM_IDENTITY: &str = "You're an expert Linux kernel developer and upstream maintainer with deep knowledge of Linux kernel, Operating Systems, CPU architectures, modern hardware and Linux kernel community standards and processes.";
 
 pub const TASK_INSTRUCTION: &str = "Run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
-Follow the Review Protocol and all Technical patterns and Subsystem Guidelines available in your context.\n";
+Follow the Review Protocol and all Technical patterns and Subsystem Guidelines available in your context.\n\
+The inline-review.txt *MUST* follow the format and guidelines provided in the '## inline-template.md' section above.";
 
 /// Files to exclude from context building
 const EXCLUDED_FILES: &[&str] = &[
@@ -32,6 +33,7 @@ const EXCLUDED_FILES: &[&str] = &[
     "review-stat.md",
     "debugging.md",
     "lore-thread.md",
+    "inline-template.md",
 ];
 
 pub struct PromptRegistry {
@@ -183,7 +185,15 @@ impl PromptRegistry {
             }
         }
 
-        // 7. Task Instruction
+        // 7. Inline Template
+        let inline_template_path = self.base_dir.join("inline-template.md");
+        if inline_template_path.exists() {
+            context.push_str("## inline-template.md\n");
+            context.push_str(&fs::read_to_string(&inline_template_path).await?);
+            context.push_str("\n\n");
+        }
+
+        // 8. Task Instruction
         context.push_str("\n\n# Task\n\n");
         context.push_str(TASK_INSTRUCTION);
 
@@ -367,5 +377,30 @@ mod tests {
         let registry = PromptRegistry::new(temp_dir.path().to_path_buf());
         let context = registry.build_context().await.unwrap();
         assert!(context.contains("Run a deep dive regression analysis"));
+    }
+
+    #[tokio::test]
+    async fn test_build_context_includes_inline_template_at_end() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let registry = PromptRegistry::new(temp_dir.path().to_path_buf());
+
+        // Create inline-template.md
+        std::fs::write(
+            temp_dir.path().join("inline-template.md"),
+            "INLINE TEMPLATE CONTENT",
+        )
+        .unwrap();
+
+        let context = registry.build_context().await.unwrap();
+
+        // Check if inline-template.md content is present
+        assert!(context.contains("INLINE TEMPLATE CONTENT"));
+
+        // Check order: INLINE TEMPLATE CONTENT should be after other files and before Task
+        // Let's rely on string finding indices
+        let inline_idx = context.find("INLINE TEMPLATE CONTENT").unwrap();
+        let task_idx = context.find("# Task").unwrap();
+
+        assert!(inline_idx < task_idx);
     }
 }
