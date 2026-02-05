@@ -88,7 +88,6 @@
         .controls input[type="text"] {
             flex: 1;
             min-width: 200px;
-            max-width: 400px;
             padding: 4px 8px;
             font-family: inherit;
             font-size: inherit;
@@ -1036,12 +1035,12 @@
                     </span>
                 </h1>
                 <div class="controls">
-                    <input type="text" id="searchInput" placeholder="Search (subject, author:, date:)" value="${escapeHtml(state.searchQuery)}">
-                    
                     <select id="listSelector" onchange="setMailingList(this.value)" style="padding: 4px 8px; border: 1px solid var(--border); border-radius: 3px;">
                         <option value="">All Lists</option>
                         ${listOptions}
                     </select>
+                    
+                    <input type="text" id="searchInput" placeholder="Search (subject, author:, date:)" value="${escapeHtml(state.searchQuery)}">
 
                     <button onclick="triggerSearch()">Search</button>
                     <button onclick="clearSearch()">Clear</button>
