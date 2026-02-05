@@ -167,6 +167,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parser Dispatcher
     let semaphore = Arc::new(Semaphore::new(50));
+    
+    // Determine ingestion cutoff timestamp
+    // If --download is passed, we accept everything (cutoff = None).
+    // If --download is NOT passed:
+    //    - If DB has messages, cutoff = oldest message timestamp.
+    //    - If DB is empty, cutoff = current time (start time).
+    let cutoff_timestamp = if cli.download.is_some() {
+        None
+    } else {
+        match db.get_oldest_message_timestamp().await {
+            Ok(Some(ts)) => {
+                info!("Ingestion cutoff set to oldest message in DB: {}", ts);
+                Some(ts)
+            }
+            Ok(None) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                info!("DB empty, ingestion cutoff set to start time: {}", now);
+                Some(now)
+            }
+            Err(e) => {
+                error!("Failed to get oldest message timestamp: {}", e);
+                // Fallback to safe default? Or fail? 
+                // Let's assume now to be safe and avoid flooding.
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                Some(now)
+            }
+        }
+    };
+
     let parser_handle = tokio::spawn(async move {
         info!("Parser Dispatcher started");
         while let Some(event) = raw_rx.recv().await {
@@ -210,6 +245,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         index,
                         total,
                     } => {
+                        // Check cutoff
+                        if let Some(cutoff) = cutoff_timestamp {
+                            if timestamp < cutoff {
+                                // info!("Skipping submitted message {} (timestamp {} < cutoff {})", message_id, timestamp, cutoff);
+                                return;
+                            }
+                        }
+
                         let root_msg_id = format!("{}@sashiko.local", article_id);
 
                         // Pre-parsed patch handling
@@ -271,6 +314,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         match parse_result {
                             Ok(Ok((metadata, patch_opt))) => {
+                                // Check cutoff
+                                if let Some(cutoff) = cutoff_timestamp {
+                                    if metadata.date < cutoff {
+                                        // info!("Skipping fetched article {} (date {} < cutoff {})", article_id, metadata.date, cutoff);
+                                        return;
+                                    }
+                                }
+
                                 if let Err(e) = tx
                                     .send(ParsedArticle {
                                         group,

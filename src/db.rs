@@ -136,6 +136,19 @@ pub struct Finding {
 }
 
 impl Database {
+    pub async fn get_oldest_message_timestamp(&self) -> Result<Option<i64>> {
+        let mut rows = self
+            .conn
+            .query("SELECT MIN(date) FROM messages WHERE date > 0", ())
+            .await?;
+
+        if let Ok(Some(row)) = rows.next().await {
+            Ok(row.get(0).ok())
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn get_message_details(&self, id: i64) -> Result<Option<MessageRow>> {
         let mut rows = self.conn.query(
             "SELECT id, message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients, git_blob_hash, mailing_list FROM messages WHERE id = ?",
