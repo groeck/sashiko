@@ -117,259 +117,264 @@ async fn main() -> Result<()> {
     let worktree =
         GitWorktree::new(&repo_path, &baseline_sha, args.worktree_dir.as_deref()).await?;
 
-    info!("Created worktree at {:?}", worktree.path);
-    info!("Found {} patches total", patches.len());
+    let result = async {
+        info!("Created worktree at {:?}", worktree.path);
+        info!("Found {} patches total", patches.len());
 
-    let mut patch_results = Vec::new();
-    let mut patch_shas = std::collections::HashMap::new();
-    let mut patch_shows = std::collections::HashMap::new();
+        let mut patch_results = Vec::new();
+        let mut patch_shas = std::collections::HashMap::new();
+        let mut patch_shows = std::collections::HashMap::new();
 
-    // 1. Apply ALL patches to validate the series
-    info!(
-        "Applying all {} patches to validate series...",
-        patches.len()
-    );
-    let mut all_applied = true;
+        // 1. Apply ALL patches to validate the series
+        info!(
+            "Applying all {} patches to validate series...",
+            patches.len()
+        );
+        let mut all_applied = true;
 
-    for p in &patches {
-        info!("Applying patch part {}", p.index);
+        for p in &patches {
+            info!("Applying patch part {}", p.index);
 
-        let success = apply_single_patch(
-            &worktree,
-            p,
-            &mut patch_shas,
-            &mut patch_shows,
-            &mut patch_results,
-        )
-        .await;
+            let success = apply_single_patch(
+                &worktree,
+                p,
+                &mut patch_shas,
+                &mut patch_shows,
+                &mut patch_results,
+            )
+            .await;
 
-        if !success {
-            all_applied = false;
-            // We continue applying to see other failures, or stop?
-            // Usually git am aborts on first failure.
-            // But we are simulating application. If one fails, subsequent ones likely fail.
-            // But let's let the loop continue to fill results for attempted patches.
-            // If git am failed, worktree might be in bad state for next apply?
-            // apply_single_patch handles git am failure by trying git apply.
+            if !success {
+                all_applied = false;
+                // We continue applying to see other failures, or stop?
+                // Usually git am aborts on first failure.
+                // But we are simulating application. If one fails, subsequent ones likely fail.
+                // But let's let the loop continue to fill results for attempted patches.
+                // If git am failed, worktree might be in bad state for next apply?
+                // apply_single_patch handles git am failure by trying git apply.
+            }
         }
-    }
 
-    // Determine patches to review
-    let patches_to_review: Vec<PatchInput> = if let Some(target_idx) = args.review_patch_index {
-        patches
-            .iter()
-            .filter(|p| p.index == target_idx)
-            .cloned()
-            .collect()
-    } else {
-        patches.clone() // Review all
-    };
+        // Determine patches to review
+        let patches_to_review: Vec<PatchInput> = if let Some(target_idx) = args.review_patch_index {
+            patches
+                .iter()
+                .filter(|p| p.index == target_idx)
+                .cloned()
+                .collect()
+        } else {
+            patches.clone() // Review all
+        };
 
-    if all_applied {
-        // 2. Prepare worktree context if reviewing a specific patch
-        if let Some(target_idx) = args.review_patch_index {
-            // If we have patches after target_idx, we need to rewind.
-            // Even if target_idx is the last one, resetting and re-applying ensures clean state.
-            // But if target_idx is last, we already have the state.
-            // Optimization: Only reset if target_idx < max_index
-            let max_index = patches.iter().map(|p| p.index).max().unwrap_or(0);
+        if all_applied {
+            // 2. Prepare worktree context if reviewing a specific patch
+            if let Some(target_idx) = args.review_patch_index {
+                // If we have patches after target_idx, we need to rewind.
+                // Even if target_idx is the last one, resetting and re-applying ensures clean state.
+                // But if target_idx is last, we already have the state.
+                // Optimization: Only reset if target_idx < max_index
+                let max_index = patches.iter().map(|p| p.index).max().unwrap_or(0);
 
-            if target_idx < max_index {
-                info!(
-                    "Resetting worktree to baseline to prepare context for patch {}...",
-                    target_idx
-                );
-                if let Err(e) = worktree.reset_hard(&baseline_sha).await {
-                    error!("Failed to reset worktree: {}", e);
-                    // If reset fails, we can't proceed safely.
-                    // Report error.
-                    let result_json = json!({
-                        "patchset_id": patchset_id,
-                        "baseline": baseline_arg,
-                        "patches": patch_results,
-                        "error": format!("Failed to reset worktree: {}", e)
-                    });
-                    println!("{}", serde_json::to_string(&result_json)?);
-                    return Ok(());
-                }
-
-                info!("Re-applying patches up to index {}...", target_idx);
-                // We use dummy containers because we already have results/shas from validation pass
-                let mut dummy_results = Vec::new();
-                let mut dummy_shas = std::collections::HashMap::new();
-                let mut dummy_shows = std::collections::HashMap::new();
-
-                let patches_subset: Vec<&PatchInput> =
-                    patches.iter().filter(|p| p.index <= target_idx).collect();
-                for p in patches_subset {
-                    let success = apply_single_patch(
-                        &worktree,
-                        p,
-                        &mut dummy_shas,
-                        &mut dummy_shows,
-                        &mut dummy_results,
-                    )
-                    .await;
-
-                    if !success {
-                        // exquisite failure: worked first time, failed second?
-                        error!("Patch {} failed to apply on second pass!", p.index);
+                if target_idx < max_index {
+                    info!(
+                        "Resetting worktree to baseline to prepare context for patch {}...",
+                        target_idx
+                    );
+                    if let Err(e) = worktree.reset_hard(&baseline_sha).await {
+                        error!("Failed to reset worktree: {}", e);
+                        // If reset fails, we can't proceed safely.
+                        // Report error.
                         let result_json = json!({
                             "patchset_id": patchset_id,
                             "baseline": baseline_arg,
                             "patches": patch_results,
-                            "error": "Inconsistent patch application (failed on re-apply)"
+                            "error": format!("Failed to reset worktree: {}", e)
                         });
                         println!("{}", serde_json::to_string(&result_json)?);
                         return Ok(());
                     }
+
+                    info!("Re-applying patches up to index {}...", target_idx);
+                    // We use dummy containers because we already have results/shas from validation pass
+                    let mut dummy_results = Vec::new();
+                    let mut dummy_shas = std::collections::HashMap::new();
+                    let mut dummy_shows = std::collections::HashMap::new();
+
+                    let patches_subset: Vec<&PatchInput> =
+                        patches.iter().filter(|p| p.index <= target_idx).collect();
+                    for p in patches_subset {
+                        let success = apply_single_patch(
+                            &worktree,
+                            p,
+                            &mut dummy_shas,
+                            &mut dummy_shows,
+                            &mut dummy_results,
+                        )
+                        .await;
+
+                        if !success {
+                            // exquisite failure: worked first time, failed second?
+                            error!("Patch {} failed to apply on second pass!", p.index);
+                            let result_json = json!({
+                                "patchset_id": patchset_id,
+                                "baseline": baseline_arg,
+                                "patches": patch_results,
+                                "error": "Inconsistent patch application (failed on re-apply)"
+                            });
+                            println!("{}", serde_json::to_string(&result_json)?);
+                            return Ok(());
+                        }
+                    }
                 }
             }
-        }
 
-        if patches_to_review.is_empty() {
-            info!("No patches matched review index or list empty. Skipping AI review.");
-            // Return success with patches status (even if we didn't review anything)
+            if patches_to_review.is_empty() {
+                info!("No patches matched review index or list empty. Skipping AI review.");
+                // Return success with patches status (even if we didn't review anything)
+                let result_json = json!({
+                    "patchset_id": patchset_id,
+                    "baseline": baseline_arg,
+                    "patches": patch_results,
+                    "review": null, // Indicate no review
+                    "input_context": "",
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "tokens_cached": 0
+                });
+                println!("{}", serde_json::to_string(&result_json)?);
+            } else {
+                info!(
+                    "Patches applied. Starting AI review for {} patches...",
+                    patches_to_review.len()
+                );
+
+                let client = Box::new(sashiko::ai::gemini::StdioGeminiClient);
+
+                // Enable read_prompt tool only if explicit caching is NOT used.
+                let prompts_tool_path = if args.gemini_cache.is_none() {
+                    Some(args.prompts.clone())
+                } else {
+                    None
+                };
+
+                let tools = ToolBox::new(worktree.path.clone(), prompts_tool_path);
+                let prompts = PromptRegistry::new(args.prompts.clone());
+                let mut worker = Worker::new(
+                    client,
+                    tools,
+                    prompts,
+                    settings.ai.max_input_tokens,
+                    settings.ai.max_interactions,
+                    settings.ai.temperature,
+                    args.gemini_cache,
+                );
+
+                let rich_patches: Vec<serde_json::Value> = patches_to_review
+                    .iter()
+                    .map(|p| {
+                        let date_str = if let Some(ts) = p.date {
+                            std::process::Command::new("date")
+                                .arg("-R")
+                                .arg("-d")
+                                .arg(format!("@{}", ts))
+                                .output()
+                                .ok()
+                                .and_then(|o| {
+                                    if o.status.success() {
+                                        Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+
+                        json!({
+                            "subject": p.subject,
+                            "author": p.author,
+                            "date_string": date_str,
+                            "diff": p.diff,
+                            "commit_id": patch_shas.get(&p.index).cloned(),
+                            "git_show": patch_shows.get(&p.index).cloned()
+                        })
+                    })
+                    .collect();
+
+                let patchset_val = json!({
+                    "id": patchset_id,
+                    "subject": subject,
+                    "patches": rich_patches
+                });
+
+                match worker.run(patchset_val).await {
+                    Ok(result) => {
+                        info!("AI review completed (or stopped).");
+
+                        // Check for review-inline.txt
+                        let inline_path = worktree.path.join("review-inline.txt");
+                        let inline_content = if inline_path.exists() {
+                            match std::fs::read_to_string(&inline_path) {
+                                Ok(content) => Some(content),
+                                Err(e) => {
+                                    error!("Failed to read review-inline.txt: {}", e);
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+
+                        let result_json = json!({
+                            "patchset_id": patchset_id,
+                            "baseline": baseline_arg,
+                            "patches": patch_results,
+                            "review": result.output,
+                            "error": result.error,
+                            "inline_review": inline_content,
+                            "input_context": result.input_context,
+                            "history": result.history,
+                            "tokens_in": result.tokens_in,
+                            "tokens_out": result.tokens_out,
+                            "tokens_cached": result.tokens_cached
+                        });
+                        println!("{}", serde_json::to_string(&result_json)?);
+                    }
+                    Err(e) => {
+                        error!("AI review failed with exception: {}", e);
+                        // Even on failure, we print what we have (patches status)
+                        let result_json = json!({
+                            "patchset_id": patchset_id,
+                            "baseline": baseline_arg,
+                            "patches": patch_results,
+                            "error": e.to_string(),
+                            "tokens_in": 0,
+                            "tokens_out": 0,
+                            "tokens_cached": 0
+                        });
+                        println!("{}", serde_json::to_string(&result_json)?);
+                    }
+                }
+            }
+        } else {
+            info!("Not all patches applied successfully. Skipping AI review.");
             let result_json = json!({
                 "patchset_id": patchset_id,
                 "baseline": baseline_arg,
                 "patches": patch_results,
-                "review": null, // Indicate no review
-                "input_context": "",
-                "tokens_in": 0,
-                "tokens_out": 0,
-                "tokens_cached": 0
+                "error": "Patch application failed"
             });
             println!("{}", serde_json::to_string(&result_json)?);
-        } else {
-            info!(
-                "Patches applied. Starting AI review for {} patches...",
-                patches_to_review.len()
-            );
-
-            let client = Box::new(sashiko::ai::gemini::StdioGeminiClient);
-
-            // Enable read_prompt tool only if explicit caching is NOT used.
-            let prompts_tool_path = if args.gemini_cache.is_none() {
-                Some(args.prompts.clone())
-            } else {
-                None
-            };
-
-            let tools = ToolBox::new(worktree.path.clone(), prompts_tool_path);
-            let prompts = PromptRegistry::new(args.prompts.clone());
-            let mut worker = Worker::new(
-                client,
-                tools,
-                prompts,
-                settings.ai.max_input_tokens,
-                settings.ai.max_interactions,
-                settings.ai.temperature,
-                args.gemini_cache,
-            );
-
-            let rich_patches: Vec<serde_json::Value> = patches_to_review
-                .iter()
-                .map(|p| {
-                    let date_str = if let Some(ts) = p.date {
-                        std::process::Command::new("date")
-                            .arg("-R")
-                            .arg("-d")
-                            .arg(format!("@{}", ts))
-                            .output()
-                            .ok()
-                            .and_then(|o| {
-                                if o.status.success() {
-                                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-
-                    json!({
-                        "subject": p.subject,
-                        "author": p.author,
-                        "date_string": date_str,
-                        "diff": p.diff,
-                        "commit_id": patch_shas.get(&p.index).cloned(),
-                        "git_show": patch_shows.get(&p.index).cloned()
-                    })
-                })
-                .collect();
-
-            let patchset_val = json!({
-                "id": patchset_id,
-                "subject": subject,
-                "patches": rich_patches
-            });
-
-            match worker.run(patchset_val).await {
-                Ok(result) => {
-                    info!("AI review completed (or stopped).");
-
-                    // Check for review-inline.txt
-                    let inline_path = worktree.path.join("review-inline.txt");
-                    let inline_content = if inline_path.exists() {
-                        match std::fs::read_to_string(&inline_path) {
-                            Ok(content) => Some(content),
-                            Err(e) => {
-                                error!("Failed to read review-inline.txt: {}", e);
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
-
-                    let result_json = json!({
-                        "patchset_id": patchset_id,
-                        "baseline": baseline_arg,
-                        "patches": patch_results,
-                        "review": result.output,
-                        "error": result.error,
-                        "inline_review": inline_content,
-                        "input_context": result.input_context,
-                        "history": result.history,
-                        "tokens_in": result.tokens_in,
-                        "tokens_out": result.tokens_out,
-                        "tokens_cached": result.tokens_cached
-                    });
-                    println!("{}", serde_json::to_string(&result_json)?);
-                }
-                Err(e) => {
-                    error!("AI review failed with exception: {}", e);
-                    // Even on failure, we print what we have (patches status)
-                    let result_json = json!({
-                        "patchset_id": patchset_id,
-                        "baseline": baseline_arg,
-                        "patches": patch_results,
-                        "error": e.to_string(),
-                        "tokens_in": 0,
-                        "tokens_out": 0,
-                        "tokens_cached": 0
-                    });
-                    println!("{}", serde_json::to_string(&result_json)?);
-                }
-            }
         }
-    } else {
-        info!("Not all patches applied successfully. Skipping AI review.");
-        let result_json = json!({
-            "patchset_id": patchset_id,
-            "baseline": baseline_arg,
-            "patches": patch_results,
-            "error": "Patch application failed"
-        });
-        println!("{}", serde_json::to_string(&result_json)?);
+        Ok(())
+    }.await;
+
+    if let Err(e) = worktree.remove().await {
+        error!("Failed to remove worktree: {}", e);
     }
 
-    worktree.remove().await?;
-
-    Ok(())
+    result
 }
 
 async fn apply_single_patch(
