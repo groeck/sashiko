@@ -685,18 +685,17 @@ impl Ingestor {
 
             let mut current = last_known;
             if current == 0 && info.high > 0 {
-                // If we have bootstrapped from git, we might want to be smarter here.
-                // But git archives don't easily map to NNTP article numbers unless we query the Message-ID.
-                // For now, if we are fresh, start from high - 5 (as per original logic).
-                // TODO: Sync git message-ids to NNTP article numbers if possible?
-                current = info.high.saturating_sub(5);
+                // Initialize with a safe overlap window (e.g. 4000 messages ~ 1 day for LKML)
+                // This ensures we catch up if git archive is slightly stale.
+                current = info.high.saturating_sub(4000);
                 self.db.update_last_article_num(group_name, current).await?;
-                info!("Initialized high-water mark to {}", current);
+                info!("Initialized high-water mark to {} (overlap window)", current);
             }
 
-            if current < info.high {
+            // Fetch ALL pending messages
+            while current < info.high {
                 let next_id = current + 1;
-                info!("Fetching article {}", next_id);
+                // info!("Fetching article {}", next_id);
                 match client.article(&next_id.to_string()).await {
                     Ok(lines) => {
                         self.sender
@@ -709,10 +708,19 @@ impl Ingestor {
                             })
                             .await?;
                         self.db.update_last_article_num(group_name, next_id).await?;
-                        info!("Updated high-water mark to {}", next_id);
+                        current = next_id;
                     }
                     Err(e) => {
-                        error!("Failed to fetch article {}: {}", next_id, e);
+                        let msg = e.to_string();
+                        // 423 is "No such article number in this group"
+                        if msg.contains("423") {
+                            warn!("Article {} missing (423), skipping", next_id);
+                            self.db.update_last_article_num(group_name, next_id).await?;
+                            current = next_id;
+                        } else {
+                            error!("Failed to fetch article {}: {}", next_id, e);
+                            break; // Stop and retry later (transient error or connection lost)
+                        }
                     }
                 }
             }
