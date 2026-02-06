@@ -126,9 +126,8 @@ impl Reviewer {
 
         if self.settings.ai.no_ai {
             info!(
-                "AI interactions disabled via settings. Reviewer service will not process patchsets."
+                "AI interactions disabled via settings. Reviewer service will skip AI analysis but verify patch application."
             );
-            return;
         }
 
         // Ensure Gemini Cache
@@ -655,6 +654,21 @@ impl Reviewer {
                                     )
                                     .await;
                                 return Ok(PatchResult::Success);
+                            } else if ctx.settings.ai.no_ai {
+                                info!("Review skipped as requested for ps={} idx={}", patchset_id, index);
+                                let _ = ctx
+                                    .db
+                                    .complete_review(
+                                        review_id,
+                                        ReviewStatus::Skipped.as_str(),
+                                        "Skipped AI review via --no-ai",
+                                        None,
+                                        interaction_id.as_deref(),
+                                        None,
+                                        logs_str.as_deref(),
+                                    )
+                                    .await;
+                                return Ok(PatchResult::Success);
                             } else {
                                 let _ = ctx
                                     .db
@@ -826,6 +840,10 @@ async fn run_review_tool(
         if settings.ai.explicit_prompts_caching {
             cmd.arg("--gemini-cache").arg(name);
         }
+    }
+
+    if settings.ai.no_ai {
+        cmd.arg("--no-ai");
     }
 
     cmd.stdin(Stdio::piped());

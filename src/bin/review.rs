@@ -51,6 +51,10 @@ struct Args {
     /// Resource name of the Gemini Context Cache to use (e.g. cachedContents/...).
     #[arg(long)]
     gemini_cache: Option<String>,
+
+    /// If set, skip AI review but still apply patches for verification.
+    #[arg(long)]
+    no_ai: bool,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -156,7 +160,7 @@ async fn main() -> Result<()> {
         }
 
         // Determine patches to review
-        let patches_to_review: Vec<PatchInput> = if let Some(target_idx) = args.review_patch_index {
+        let mut patches_to_review: Vec<PatchInput> = if let Some(target_idx) = args.review_patch_index {
             patches
                 .iter()
                 .filter(|p| p.index == target_idx)
@@ -165,6 +169,11 @@ async fn main() -> Result<()> {
         } else {
             patches.clone() // Review all
         };
+
+        if args.no_ai {
+            info!("Skipping AI review due to --no-ai flag.");
+            patches_to_review.clear();
+        }
 
         if all_applied {
             // 2. Prepare worktree context if reviewing a specific patch
