@@ -1495,7 +1495,7 @@
                                     <td style="padding:6px; border-bottom:1px solid #eee;">${escapeHtml(item.baseline)}</td>
                                     <td style="padding:6px; border-bottom:1px solid #eee;">${statusBadge}</td>
                                     <td style="padding:6px; border-bottom:1px solid #eee; text-align:right;">
-                                        <button onclick="toggleCollapsible('${rowId}', null)" style="font-size:0.85em; padding:2px 6px;">View Log</button>
+                                        <button class="toggle-btn" onclick="toggleCollapsible('${rowId}', this)" style="font-size:0.85em;">▶ Details</button>
                                     </td>
                                 </tr>
                                 <tr id="${rowId}" class="collapsible" style="background:#fcfcfc;">
