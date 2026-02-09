@@ -1461,21 +1461,76 @@
             let baselineLogsHtml = '';
             if (data.baseline_logs) {
                  const logId = 'baseline-logs-' + Math.random().toString(36).substr(2, 9);
-                 const formattedLogs = escapeHtml(data.baseline_logs)
-                    .replace(/ - passed/g, ' - <span style="color:#2e7d32; font-weight:bold">passed</span>')
-                    .replace(/ - failed/g, ' - <span style="color:#d73a49; font-weight:bold">failed</span>')
-                    .replace(/Application successful./g, '<span style="color:#2e7d32; font-weight:bold">Application successful.</span>')
-                    .replace(/Application failed./g, '<span style="color:#d73a49; font-weight:bold">Application failed.</span>');
+                 let contentHtml = '';
+                 let isJson = false;
+                 
+                 try {
+                     const logs = JSON.parse(data.baseline_logs);
+                     if (Array.isArray(logs)) {
+                         isJson = true;
+                         // Render table
+                         contentHtml = `
+                            <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+                                <thead>
+                                    <tr style="background:#f6f8fa;">
+                                        <th style="text-align:left; padding:6px; border-bottom:1px solid #d0d7de;">Baseline</th>
+                                        <th style="text-align:left; padding:6px; border-bottom:1px solid #d0d7de; width:100px;">Status</th>
+                                        <th style="text-align:right; padding:6px; border-bottom:1px solid #d0d7de; width:120px;">Log</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                         `;
+                         
+                         logs.forEach((item, idx) => {
+                             const rowId = `bl-log-${logId}-${idx}`;
+                             let statusBadge = '';
+                             if (item.status === 'Applied') {
+                                 statusBadge = '<span class="status-badge status-Applied">Applied</span>';
+                             } else {
+                                 statusBadge = '<span class="status-badge status-Failed">Failed</span>';
+                             }
+                             
+                             contentHtml += `
+                                <tr>
+                                    <td style="padding:6px; border-bottom:1px solid #eee;">${escapeHtml(item.baseline)}</td>
+                                    <td style="padding:6px; border-bottom:1px solid #eee;">${statusBadge}</td>
+                                    <td style="padding:6px; border-bottom:1px solid #eee; text-align:right;">
+                                        <button onclick="toggleCollapsible('${rowId}', null)" style="font-size:0.85em; padding:2px 6px;">View Log</button>
+                                    </td>
+                                </tr>
+                                <tr id="${rowId}" class="collapsible" style="background:#fcfcfc;">
+                                    <td colspan="3" style="padding:0;">
+                                        <div class="log-block" style="border:none; border-bottom:1px solid #eee; margin:0; max-height:300px;">${escapeHtml(item.log || '')}</div>
+                                    </td>
+                                </tr>
+                             `;
+                         });
+                         
+                         contentHtml += '</tbody></table>';
+                     }
+                 } catch (e) {
+                     // Fallback to text
+                 }
+
+                 if (!isJson) {
+                     const formattedLogs = escapeHtml(data.baseline_logs)
+                        .replace(/ - passed/g, ' - <span style="color:#2e7d32; font-weight:bold">passed</span>')
+                        .replace(/ - failed/g, ' - <span style="color:#d73a49; font-weight:bold">failed</span>')
+                        .replace(/Application successful./g, '<span style="color:#2e7d32; font-weight:bold">Application successful.</span>')
+                        .replace(/Application failed./g, '<span style="color:#d73a49; font-weight:bold">Application failed.</span>');
+                     
+                     contentHtml = `<div class="log-block" style="max-height:300px;">${formattedLogs}</div>`;
+                 }
 
                  baselineLogsHtml = `
                     <div class="section">
                         <h2 style="display:flex; align-items:center; gap:10px;">
                             Baseline
-                            <button class="toggle-btn" onclick="toggleCollapsible('${logId}', this)" style="font-size:0.8em; font-weight:normal;">▼ Show Logs</button>
+                            <button class="toggle-btn" onclick="toggleCollapsible('${logId}', this)" style="font-size:0.8em; font-weight:normal;">▼ Show Details</button>
                         </h2>
                         <div class="kv"><div class="label">Selected:</div><div>${baselineStr}</div></div>
                         <div id="${logId}" class="collapsible open">
-                            <div class="log-block" style="max-height:300px;">${formattedLogs}</div>
+                            ${contentHtml}
                         </div>
                     </div>
                  `;

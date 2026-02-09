@@ -23,6 +23,7 @@ use crate::db::{AiInteractionParams, Database, Finding, PatchsetRow, Severity, T
 use crate::git_ops::{ensure_remote, get_commit_hash, GitWorktree};
 use crate::settings::Settings;
 use anyhow::Result;
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,13 @@ enum PatchResult {
     Success,
     ApplyFailed,
     ReviewFailed,
+}
+
+#[derive(Serialize)]
+struct BaselineAttempt {
+    baseline: String,
+    status: String,
+    log: String,
 }
 
 fn generate_id() -> String {
@@ -401,19 +409,25 @@ impl Reviewer {
         HashMap<i64, String>,
         String,
     ) {
-        let mut full_logs = String::new();
+        let mut attempts: Vec<BaselineAttempt> = Vec::new();
         let repo_path = PathBuf::from(&ctx.settings.git.repository_path);
 
         for candidate in candidates {
             let baseline_ref = candidate.as_str();
-            full_logs.push_str(&format!("Trying baseline: {}\n", baseline_ref));
-            
+            let mut current_log = format!("Trying baseline: {}\n", baseline_ref);
+            let mut current_status = "Failed".to_string();
+
             // Check remote
             if let BaselineResolution::RemoteTarget { url, name, .. } = candidate {
                 if let Err(e) = ensure_remote(&repo_path, name, url, false).await {
                     let msg = format!("Failed to fetch remote {}: {}\n", url, e);
-                    full_logs.push_str(&msg);
+                    current_log.push_str(&msg);
                     error!("{}", msg.trim());
+                    attempts.push(BaselineAttempt {
+                        baseline: baseline_ref.clone(),
+                        status: current_status,
+                        log: current_log,
+                    });
                     continue;
                 }
             }
@@ -423,7 +437,12 @@ impl Reviewer {
                 Ok(sha) => sha,
                 Err(e) => {
                     let msg = format!("Failed to resolve baseline ref {}: {}\n", baseline_ref, e);
-                    full_logs.push_str(&msg);
+                    current_log.push_str(&msg);
+                    attempts.push(BaselineAttempt {
+                        baseline: baseline_ref.clone(),
+                        status: current_status,
+                        log: current_log,
+                    });
                     continue;
                 }
             };
@@ -439,7 +458,12 @@ impl Reviewer {
                 Ok(wt) => wt,
                 Err(e) => {
                     let msg = format!("Failed to create worktree: {}\n", e);
-                    full_logs.push_str(&msg);
+                    current_log.push_str(&msg);
+                    attempts.push(BaselineAttempt {
+                        baseline: baseline_ref.clone(),
+                        status: current_status,
+                        log: current_log,
+                    });
                     continue;
                 }
             };
@@ -450,7 +474,7 @@ impl Reviewer {
             let mut apply_logs = String::new();
 
             for (patch_id, index, diff, subject, author, date_ts, _msg_id) in diffs {
-                 let date_str = std::process::Command::new("date")
+                let date_str = std::process::Command::new("date")
                     .arg("-R")
                     .arg("-d")
                     .arg(format!("@{}", date_ts))
@@ -473,28 +497,28 @@ impl Reviewer {
                 // Try git am
                 let mut applied = false;
                 if let Ok(_) = worktree.apply_patch(&mbox).await {
-                     applied = true;
+                    applied = true;
                 } else {
-                     // Fallback raw diff
-                     if let Ok(o) = worktree.apply_raw_diff(diff).await {
-                         if o.status.success() {
-                             applied = true;
-                              // Commit raw diff
-                             let _ = Command::new("git")
+                    // Fallback raw diff
+                    if let Ok(o) = worktree.apply_raw_diff(diff).await {
+                        if o.status.success() {
+                            applied = true;
+                            // Commit raw diff
+                            let _ = Command::new("git")
                                 .current_dir(&worktree.path)
                                 .args(["add", "."])
                                 .output()
                                 .await;
-                             let commit_msg = format!("{}\n\n(Applied via git apply)", subject);
-                             let _ = Command::new("git")
+                            let commit_msg = format!("{}\n\n(Applied via git apply)", subject);
+                            let _ = Command::new("git")
                                 .current_dir(&worktree.path)
                                 .env("GIT_AUTHOR_NAME", author)
                                 .env("GIT_AUTHOR_EMAIL", "sashiko@localhost")
                                 .args(["commit", "-m", &commit_msg])
                                 .output()
                                 .await;
-                         }
-                     }
+                        }
+                    }
                 }
 
                 if applied {
@@ -502,7 +526,10 @@ impl Reviewer {
                         patch_commits.insert(*index, sha);
                     }
                 } else {
-                    let msg = format!("Patch {}/{} (ID: {}) failed to apply.\n", patchset_id, index, patch_id);
+                    let msg = format!(
+                        "Patch {}/{} (ID: {}) failed to apply.\n",
+                        patchset_id, index, patch_id
+                    );
                     apply_logs.push_str(&msg);
                     application_failed = true;
                     break;
@@ -510,8 +537,15 @@ impl Reviewer {
             }
 
             if !application_failed {
-                full_logs.push_str("Application successful.\n");
-                
+                current_log.push_str("Application successful.\n");
+                current_status = "Applied".to_string();
+
+                attempts.push(BaselineAttempt {
+                    baseline: baseline_ref.clone(),
+                    status: current_status,
+                    log: current_log,
+                });
+
                 // Create baseline in DB
                 let baseline_id = {
                     let (repo_url, branch) = match candidate {
@@ -526,21 +560,50 @@ impl Reviewer {
                         .ok() // If fail, we just proceed? Better to have it.
                 };
 
+                // Serialize attempts to JSON
+                let logs_json = serde_json::to_string(&attempts).unwrap_or_default();
+
                 if let Some(bid) = baseline_id {
-                    return (Some((candidate.clone(), bid, worktree)), patch_commits, full_logs);
+                    return (
+                        Some((candidate.clone(), bid, worktree)),
+                        patch_commits,
+                        logs_json,
+                    );
                 } else {
-                    full_logs.push_str("Failed to record baseline in DB.\n");
+                    // Fallback if DB insert fails, though unlikely
+                    // We still return success but maybe log error?
+                    // We continue loop? No, application succeeded.
+                    // Just return success without ID? But caller needs ID.
+                    // This path is tricky. Let's assume ID creation works or we fail this attempt.
+                    // If we fail, we clean up.
+                    // For now, let's treat it as success but maybe missing ID is fatal for `Some` return.
+                    // But `create_baseline` returns Result<i64>.
+                    // If it fails, we can't associate baseline.
+                    // Let's count it as failure?
+                    // Re-push attempt with failure?
+                    // Actually we already pushed "Applied".
+                    // Let's modify the last attempt status if we can't save to DB.
+                    if let Some(last) = attempts.last_mut() {
+                        last.status = "DB Error".to_string();
+                        last.log.push_str("Failed to record baseline in DB.\n");
+                    }
                 }
             } else {
-                full_logs.push_str(&apply_logs);
-                full_logs.push_str("Application failed.\n");
+                current_log.push_str(&apply_logs);
+                current_log.push_str("Application failed.\n");
+                attempts.push(BaselineAttempt {
+                    baseline: baseline_ref.clone(),
+                    status: current_status,
+                    log: current_log,
+                });
             }
-            
+
             // Clean up failed worktree
             let _ = worktree.remove().await;
         }
 
-        (None, HashMap::new(), full_logs)
+        let logs_json = serde_json::to_string(&attempts).unwrap_or_default();
+        (None, HashMap::new(), logs_json)
     }
 
     #[allow(clippy::too_many_arguments)]
