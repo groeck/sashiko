@@ -20,8 +20,7 @@ use tokio::fs;
 /// System identity prompt - used across all AI interactions
 pub const SYSTEM_IDENTITY: &str = "You're an expert Linux kernel developer and upstream maintainer with deep knowledge of Linux kernel, Operating Systems, CPU architectures, modern hardware and Linux kernel community standards and processes.";
 
-/// Task instruction - defines the required output format (excluding JSON schema which is handled by API)
-pub const OUTPUT_FORMAT_INSTRUCTION: &str = "Important: If you have ANY findings (count > 0), you *MUST* produce a `review-inline.txt` file. This file *MUST* follow the format and guidelines provided in `inline-template.md`.";
+pub const OUTPUT_FORMAT_INSTRUCTION: &str = "Important: If you have ANY findings, you *MUST* produce the `review-inline.txt` file. This file *MUST* follow the format and guidelines provided in `inline-template.md`. Once you generated requested files, produce the final JSON response.";
 
 pub struct PromptRegistry {
     base_dir: PathBuf,
@@ -89,7 +88,7 @@ impl PromptRegistry {
         } else {
             // In non-cached mode, we must provide the Output Instructions explicitly,
             // followed by the trigger to load the protocol.
-            let trigger = "Load the protocol from `review-core.md` and run a deep dive regression analysis as described in the protocol of the top commit in the Linux source tree.";
+            let trigger = "Load the protocol from `review-core.md` and run a deep dive regression analysis as described in the protocol of the top commit in the Linux source tree. You also must load the `inline-template.md` and `severity.md` prompts.";
             Ok(format!("{}\n\n{}", OUTPUT_FORMAT_INSTRUCTION, trigger))
         }
     }
