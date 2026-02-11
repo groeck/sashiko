@@ -28,6 +28,8 @@ You must produce the following outputs:\n\
 Ignore any previous instructions to generate a separate 'review-metadata.json' file; only provide this JSON in your final response.\n\n\
 JSON Output Schema:\n\
 {\n\
+  \"analysis_trace\": [\"step 1\", \"step 2\"],\n\
+  \"verdict\": \"Brief verdict\",\n\
   \"findings\": [\n\
     {\n\
       \"file\": \"path/to/file\",\n\
@@ -36,8 +38,7 @@ JSON Output Schema:\n\
       \"message\": \"Description of the finding\",\n\
       \"suggestion\": \"Optional code suggestion\"\n\
     }\n\
-  ],\n\
-  \"summary\": \"Overall summary of the review\"\n\
+  ]\n\
 }";
 
 /// Files to exclude from context building
@@ -89,14 +90,25 @@ impl PromptRegistry {
             Ok(format!("{}\nAnalyze the provided patch:", SYSTEM_IDENTITY))
         } else {
             let review_core = self.get_review_core().await?;
+            let inline_template_path = self.base_dir.join("inline-template.md");
+            let inline_template = if inline_template_path.exists() {
+                format!(
+                    "## inline-template.md\n{}\n\n",
+                    fs::read_to_string(&inline_template_path).await?
+                )
+            } else {
+                String::new()
+            };
+
             Ok(format!(
                 "{} Using the prompt kernel/review-core.md run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
                  ## Review Protocol (review-core.md)\n\
                  {}\n\n\
+                 {}\
                  # Task\n\
                  {}\n\n\
                  Analyze the provided patch:",
-                SYSTEM_IDENTITY, review_core, TASK_INSTRUCTION
+                SYSTEM_IDENTITY, review_core, inline_template, TASK_INSTRUCTION
             ))
         }
     }
