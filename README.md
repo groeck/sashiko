@@ -88,6 +88,16 @@ Sashiko includes a benchmarking suite to evaluate the effectiveness of its AI re
     ```
     The results will be printed to the console and saved to `benchmark_results.json`.
 
+## Contributing
+
+This project uses the Developer Certificate of Origin (DCO). All contributions must include a `Signed-off-by` line to certify that you wrote the code or have the right to contribute it.
+
+You can automatically add this line by using the `-s` flag when committing:
+
+```bash
+git commit -s
+```
+
 ## License
 
 Licensed under the Apache License, Version 2.0 (the "License");
