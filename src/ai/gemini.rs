@@ -822,3 +822,172 @@ impl AiProvider for GeminiClient {
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{AiMessage, AiRole, ToolCall};
+    use serde_json::json;
+
+    #[test]
+    fn test_translate_ai_request_system_and_user() -> Result<()> {
+        let request = AiRequest {
+            messages: vec![
+                AiMessage {
+                    role: AiRole::System,
+                    content: Some("You are a helpful assistant.".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                AiMessage {
+                    role: AiRole::User,
+                    content: Some("Hello!".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            tools: None,
+            temperature: Some(0.7),
+            response_format: None,
+            preloaded_context: None,
+        };
+
+        let gemini_req = translate_ai_request(request)?;
+
+        assert!(gemini_req.system_instruction.is_some());
+        let sys_part = &gemini_req.system_instruction.unwrap().parts[0];
+        if let Part::Text { text, .. } = sys_part {
+            assert_eq!(text, "You are a helpful assistant.");
+        } else {
+            panic!("Expected Text part in system instruction");
+        }
+
+        assert_eq!(gemini_req.contents.len(), 1);
+        assert_eq!(gemini_req.contents[0].role, "user");
+        let user_part = &gemini_req.contents[0].parts[0];
+        if let Part::Text { text, .. } = user_part {
+            assert_eq!(text, "Hello!");
+        } else {
+            panic!("Expected Text part in user content");
+        }
+
+        assert_eq!(gemini_req.generation_config.unwrap().temperature, Some(0.7));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_ai_request_assistant_tool_call() -> Result<()> {
+        let request = AiRequest {
+            messages: vec![AiMessage {
+                role: AiRole::Assistant,
+                content: Some("I will use a tool.".to_string()),
+                tool_calls: Some(vec![ToolCall {
+                    id: "call_123".to_string(),
+                    function_name: "test_tool".to_string(),
+                    arguments: json!({"arg1": "val1"}),
+                    thought_signature: Some("thought_sig_abc".to_string()),
+                }]),
+                tool_call_id: None,
+            }],
+            tools: None,
+            temperature: None,
+            response_format: None,
+            preloaded_context: None,
+        };
+
+        let gemini_req = translate_ai_request(request)?;
+
+        assert_eq!(gemini_req.contents.len(), 1);
+        assert_eq!(gemini_req.contents[0].role, "model");
+        assert_eq!(gemini_req.contents[0].parts.len(), 2);
+
+        if let Part::Text { text, .. } = &gemini_req.contents[0].parts[0] {
+            assert_eq!(text, "I will use a tool.");
+        } else {
+            panic!("Expected Text part first");
+        }
+
+        if let Part::FunctionCall {
+            function_call,
+            thought_signature,
+        } = &gemini_req.contents[0].parts[1]
+        {
+            assert_eq!(function_call.name, "test_tool");
+            assert_eq!(function_call.args["arg1"], "val1");
+            assert_eq!(thought_signature.as_deref(), Some("thought_sig_abc"));
+        } else {
+            panic!("Expected FunctionCall part second");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_ai_response_with_thought_signature() -> Result<()> {
+        let gemini_resp = GenerateContentResponse {
+            candidates: Some(vec![Candidate {
+                content: Content {
+                    role: "model".to_string(),
+                    parts: vec![Part::FunctionCall {
+                        function_call: FunctionCall {
+                            name: "test_tool".to_string(),
+                            args: json!({"arg1": "val1"}),
+                        },
+                        thought_signature: Some("thought_sig_xyz".to_string()),
+                    }],
+                },
+                finish_reason: Some("STOP".to_string()),
+            }]),
+            usage_metadata: Some(UsageMetadata {
+                prompt_token_count: 10,
+                candidates_token_count: Some(20),
+                total_token_count: 30,
+                cached_content_token_count: None,
+                extra: None,
+            }),
+        };
+
+        let ai_resp = translate_ai_response(gemini_resp)?;
+
+        assert!(ai_resp.content.is_none());
+        let tool_calls = ai_resp.tool_calls.unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].function_name, "test_tool");
+        assert_eq!(
+            tool_calls[0].thought_signature.as_deref(),
+            Some("thought_sig_xyz")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_ai_request_tool_response() -> Result<()> {
+        let request = AiRequest {
+            messages: vec![AiMessage {
+                role: AiRole::Tool,
+                content: Some(json!({"result": "success"}).to_string()),
+                tool_calls: None,
+                tool_call_id: Some("call_123".to_string()),
+            }],
+            tools: None,
+            temperature: None,
+            response_format: None,
+            preloaded_context: None,
+        };
+
+        let gemini_req = translate_ai_request(request)?;
+
+        assert_eq!(gemini_req.contents.len(), 1);
+        assert_eq!(gemini_req.contents[0].role, "function");
+        if let Part::FunctionResponse { function_response } = &gemini_req.contents[0].parts[0] {
+            assert_eq!(function_response.name, "call_123");
+            assert_eq!(function_response.response["result"], "success");
+        } else {
+            panic!("Expected FunctionResponse part");
+        }
+
+        Ok(())
+    }
+}
