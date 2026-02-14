@@ -95,6 +95,7 @@ impl Worker {
         messages.extend(self.history.clone());
 
         let request = AiRequest {
+            system: None,
             messages,
             tools: Some(self.tools.get_declarations_generic()),
             temperature: Some(self.temperature),
@@ -270,6 +271,7 @@ impl Worker {
             final_history_after_pruning = after;
 
             let request = AiRequest {
+                system: None,
                 messages: {
                     let mut msgs = Vec::new();
                     msgs.push(system_message.clone());

@@ -90,6 +90,10 @@ pub struct AiTool {
 /// A generic AI request containing conversation history and configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiRequest {
+    /// Optional system prompt that sets the behavior or context of the AI.
+    /// This is extracted separately from messages to allow providers to handle it directly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
     /// The sequence of messages in the conversation.
     pub messages: Vec<AiMessage>,
     /// Optional list of tools available to the AI.
@@ -202,6 +206,7 @@ mod tests {
     #[test]
     fn test_ai_request_contract() -> Result<()> {
         let request = AiRequest {
+            system: None,
             messages: vec![AiMessage {
                 role: AiRole::User,
                 content: Some("Hello".to_string()),

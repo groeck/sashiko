@@ -110,6 +110,7 @@ impl CacheManager {
 
         // Create new cache
         let request = AiRequest {
+            system: None,
             messages: vec![AiMessage {
                 role: AiRole::User,
                 content: Some(context_str),

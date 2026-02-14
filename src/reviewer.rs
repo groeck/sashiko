@@ -1528,6 +1528,7 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
 
                         let resp = provider
                             .generate_content(AiRequest {
+                                system: None,
                                 messages: vec![],
                                 tools: None,
                                 temperature: None,

@@ -832,6 +832,7 @@ mod tests {
     #[test]
     fn test_translate_ai_request_system_and_user() -> Result<()> {
         let request = AiRequest {
+            system: None,
             messages: vec![
                 AiMessage {
                     role: AiRole::System,
@@ -879,6 +880,7 @@ mod tests {
     #[test]
     fn test_translate_ai_request_assistant_tool_call() -> Result<()> {
         let request = AiRequest {
+            system: None,
             messages: vec![AiMessage {
                 role: AiRole::Assistant,
                 content: Some("I will use a tool.".to_string()),
@@ -965,6 +967,7 @@ mod tests {
     #[test]
     fn test_translate_ai_request_tool_response() -> Result<()> {
         let request = AiRequest {
+            system: None,
             messages: vec![AiMessage {
                 role: AiRole::Tool,
                 content: Some(json!({"result": "success"}).to_string()),
@@ -1000,6 +1003,7 @@ mod tests {
             }
         });
         let request = AiRequest {
+            system: None,
             messages: vec![AiMessage {
                 role: AiRole::User,
                 content: Some("Score this.".to_string()),
@@ -1029,6 +1033,7 @@ mod tests {
     #[test]
     fn test_translate_ai_request_conversation_chain() -> Result<()> {
         let request = AiRequest {
+            system: None,
             messages: vec![
                 AiMessage {
                     role: AiRole::User,
@@ -1093,6 +1098,7 @@ mod tests {
     #[test]
     fn test_estimate_tokens_logic() {
         let request = AiRequest {
+            system: None,
             messages: vec![
                 AiMessage {
                     role: AiRole::User,
