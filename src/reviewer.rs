@@ -1490,17 +1490,8 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
         std::fs::set_permissions(&bin_path, Permissions::from_mode(0o755))?;
 
         // Setup Sashiko dependencies
-        let settings = Settings::new()?;
-        // Force use of our mock binary by overriding Command logic in run_review_tool is hard,
-        // but we can simulate the environment.
-        // Actually, run_review_tool looks for a binary named 'review' in the current exe dir.
-        // We'll temporarily point settings to use this mock by hijacking the exe path logic if we could,
-        // but let's just test the loop logic by calling run_review_tool and letting it fail finding 'review'
-        // OR we can refactor run_review_tool to take the command as an argument.
-
-        // For the sake of this test, I will add a small helper or just mock the Command.
-        // Given I can't easily change the binary path without changing the code,
-        // I will use a simplified version of the run_review_tool loop here to test CONCURRENCY.
+        let mut settings = Settings::new()?;
+        settings.database.url = ":memory:".to_string();
 
         let _db = Arc::new(Database::new(&settings.database).await?);
         let _quota_manager = Arc::new(QuotaManager::new());
@@ -1513,7 +1504,6 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
         ));
         let _active_cache_name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let provider = Arc::new(MockProvider);
-
         // We manually spawn the mock and run the same loop as run_review_tool
         let mut cmd = Command::new(&bin_path);
         cmd.stdin(Stdio::piped());
@@ -1573,6 +1563,250 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
         assert_eq!(result.unwrap()["patchset_id"], 1);
 
         child.wait().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reactive_cache_refresh() -> Result<()> {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let refresh_count = Arc::new(AtomicU32::new(0));
+
+        struct ReactiveMockProvider {
+            call_count: Arc<AtomicU32>,
+            refresh_count: Arc<AtomicU32>,
+        }
+        #[async_trait]
+        impl AiProvider for ReactiveMockProvider {
+            async fn generate_content(&self, request: AiRequest) -> Result<AiResponse> {
+                let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+                if count == 0 {
+                    // First call fails with 403
+                    assert_eq!(request.preloaded_context.as_deref(), Some("stale-cache"));
+                    anyhow::bail!("403 Permission Denied: CachedContent not found");
+                } else {
+                    // Second call succeeds
+                    assert_eq!(request.preloaded_context.as_deref(), Some("fresh-cache"));
+                    Ok(AiResponse {
+                        content: Some("Success after refresh".to_string()),
+                        tool_calls: None,
+                        usage: None,
+                    })
+                }
+            }
+            async fn create_context_cache(
+                &self,
+                _request: AiRequest,
+                _ttl: String,
+                _display_name: Option<String>,
+            ) -> Result<String> {
+                self.refresh_count.fetch_add(1, Ordering::SeqCst);
+                Ok("fresh-cache".to_string())
+            }
+            fn estimate_tokens(&self, _request: &AiRequest) -> usize {
+                0
+            }
+            fn get_capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    model_name: "mock".to_string(),
+                    context_window_size: 1000,
+                }
+            }
+        }
+
+        let temp_dir = tempdir()?;
+        let bin_path = temp_dir.path().join("mock_review_cache");
+
+        let mock_script = r#"#!/bin/bash
+read -r input
+# Child sends request with stale cache
+echo '{"type": "ai_request", "payload": {"messages": [], "preloaded_context": "stale-cache"}}'
+read -r response
+# Child receives response and prints it
+echo "$response"
+echo '{"patchset_id": 1, "patches": []}'
+"#;
+        std::fs::write(&bin_path, mock_script)?;
+        std::fs::set_permissions(&bin_path, Permissions::from_mode(0o755))?;
+
+        let mut settings = Settings::new()?;
+        settings.database.url = ":memory:".to_string();
+        let _db = Arc::new(Database::new(&settings.database).await?);
+        let _quota_manager = Arc::new(QuotaManager::new());
+        let provider = Arc::new(ReactiveMockProvider {
+            call_count: call_count.clone(),
+            refresh_count: refresh_count.clone(),
+        });
+        let cache_manager = Arc::new(CacheManager::new(
+            PathBuf::from("."),
+            provider.clone(),
+            "mock".to_string(),
+            "1h".to_string(),
+            None,
+        ));
+        let active_cache_name = Arc::new(Mutex::new(Some("stale-cache".to_string())));
+
+        let mut cmd = Command::new(&bin_path);
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+        let mut child = cmd.spawn()?;
+        let mut stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+
+        // This block effectively runs the interaction loop from run_review_tool
+        let mut reader = BufReader::new(stdout).lines();
+        stdin.write_all(b"{}\n").await?;
+        stdin.flush().await?;
+
+        while let Ok(Some(line)) = reader.next_line().await {
+            if let Ok(json_msg) = serde_json::from_str::<Value>(&line) {
+                if json_msg["type"] == "ai_request" {
+                    let mut req: AiRequest = serde_json::from_value(json_msg["payload"].clone())?;
+                    let mut cache_retry_done = false;
+                    let resp = loop {
+                        match provider.generate_content(req.clone()).await {
+                            Ok(r) => break Ok(r),
+                            Err(e) => {
+                                if !cache_retry_done && e.to_string().contains("403") {
+                                    cache_retry_done = true;
+                                    let mut guard = active_cache_name.lock().await;
+                                    *guard = None;
+                                    let new_name =
+                                        cache_manager.ensure_cache(Some("stale-cache")).await?;
+                                    *guard = Some(new_name.clone());
+                                    req.preloaded_context = Some(new_name);
+                                    continue;
+                                }
+                                break Err(e);
+                            }
+                        }
+                    };
+                    let reply = json!({ "type": "ai_response", "payload": resp? });
+                    stdin
+                        .write_all(serde_json::to_string(&reply)?.as_bytes())
+                        .await?;
+                    stdin.write_all(b"\n").await?;
+                    stdin.flush().await?;
+                } else if json_msg.get("patchset_id").is_some() {
+                    break;
+                }
+            }
+        }
+
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+        child.wait().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cross_task_cache_refresh_coordination() -> Result<()> {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let refresh_count = Arc::new(AtomicU32::new(0));
+
+        struct MultiMockProvider {
+            refresh_count: Arc<AtomicU32>,
+        }
+        #[async_trait]
+        impl AiProvider for MultiMockProvider {
+            async fn generate_content(&self, request: AiRequest) -> Result<AiResponse> {
+                if request.preloaded_context.as_deref() == Some("stale") {
+                    anyhow::bail!("403 Permission Denied: CachedContent not found");
+                }
+                Ok(AiResponse {
+                    content: Some("Ok".to_string()),
+                    tool_calls: None,
+                    usage: None,
+                })
+            }
+            async fn create_context_cache(
+                &self,
+                _request: AiRequest,
+                _ttl: String,
+                _display_name: Option<String>,
+            ) -> Result<String> {
+                // Simulate slow refresh to increase race probability
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                self.refresh_count.fetch_add(1, Ordering::SeqCst);
+                Ok("fresh".to_string())
+            }
+            fn estimate_tokens(&self, _request: &AiRequest) -> usize {
+                0
+            }
+            fn get_capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    model_name: "m".to_string(),
+                    context_window_size: 10,
+                }
+            }
+        }
+
+        let provider = Arc::new(MultiMockProvider {
+            refresh_count: refresh_count.clone(),
+        });
+        let cache_manager = Arc::new(CacheManager::new(
+            PathBuf::from("."),
+            provider.clone(),
+            "m".to_string(),
+            "1h".to_string(),
+            None,
+        ));
+        let active_cache_name = Arc::new(Mutex::new(Some("stale".to_string())));
+
+        // Simulate two concurrent tasks both hitting 403
+        let mut handles = vec![];
+        for _ in 0..2 {
+            let p = provider.clone();
+            let cm = cache_manager.clone();
+            let acn = active_cache_name.clone();
+            handles.push(tokio::spawn(async move {
+                let mut req = AiRequest {
+                    system: None,
+                    messages: vec![],
+                    tools: None,
+                    temperature: None,
+                    preloaded_context: Some("stale".to_string()),
+                    response_format: None,
+                };
+
+                let mut retry = false;
+                loop {
+                    match p.generate_content(req.clone()).await {
+                        Ok(_) => break Ok::<(), anyhow::Error>(()),
+                        Err(e) => {
+                            if !retry && e.to_string().contains("403") {
+                                retry = true;
+                                let mut guard = acn.lock().await;
+                                let current = req.preloaded_context.clone();
+                                if let Some(active) = guard.as_ref() {
+                                    if current.as_ref() != Some(active) {
+                                        // Already refreshed by another task!
+                                        req.preloaded_context = Some(active.clone());
+                                        drop(guard);
+                                        continue;
+                                    }
+                                }
+                                *guard = None;
+                                let new = cm.ensure_cache(current.as_deref()).await?;
+                                *guard = Some(new.clone());
+                                req.preloaded_context = Some(new);
+                                drop(guard);
+                                continue;
+                            }
+                            break Err(e);
+                        }
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.await??;
+        }
+
+        // Critical assertion: Only ONE refresh call happened despite two failures
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
         Ok(())
     }
 }
