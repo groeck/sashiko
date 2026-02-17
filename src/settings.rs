@@ -69,6 +69,8 @@ fn default_max_interactions() -> usize {
 pub struct ServerSettings {
     pub host: String,
     pub port: u16,
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]

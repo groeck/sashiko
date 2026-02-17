@@ -34,9 +34,9 @@ struct Cli {
     #[arg(long)]
     track: bool,
 
-    /// Enable REST API for manual injection (disabled by default)
+    /// Disable non-read-only API calls (web ui should still work)
     #[arg(long)]
-    api: bool,
+    no_api: bool,
 
     /// Disable AI interactions (ingestion only)
     #[arg(long)]
@@ -45,27 +45,6 @@ struct Cli {
     /// Port to listen on (overrides settings)
     #[arg(long)]
     port: Option<u16>,
-
-    /// Ingest specific messages by Message-ID
-    #[arg(long)]
-    message: Option<Vec<String>>,
-
-    /// Ingest specific threads by the Message-ID of the first message
-    #[arg(long, value_name = "MSG_ID")]
-    thread: Option<Vec<String>>,
-
-    /// Ingest patches from a local git repository (hash, tag, or range)
-    #[arg(long, value_name = "REV_RANGE")]
-    git: Option<String>,
-
-    /// Run ingestion only, skipping the reviewer service
-    #[arg(long)]
-    ingest_only: bool,
-
-    /// Git baseline for the specific patch or patchset (e.g. commit hash)
-    /// Only valid with --message or --thread
-    #[arg(long)]
-    baseline: Option<String>,
 
     /// Enable debug logging (overrides settings)
     #[arg(long)]
@@ -131,9 +110,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("AI interactions disabled via --no-ai flag");
     }
 
-    if cli.baseline.is_some() && cli.message.is_none() && cli.thread.is_none() {
-        error!("--baseline can only be used with --message or --thread");
-        return Err("Invalid argument combination".into());
+    if cli.no_api {
+        settings.server.read_only = true;
+        info!("API enabled in READ-ONLY mode via --no-api flag");
     }
 
     if let Some(port) = cli.port {
@@ -406,7 +385,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // DB Worker (Transactional Batching)
     let worker_db = db.clone();
-    let db_worker_handle = tokio::spawn(async move {
+    let _db_worker_handle = tokio::spawn(async move {
         info!("DB Worker started");
 
         let mut buffer = Vec::with_capacity(100);
@@ -458,17 +437,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Start Ingestor (feeds raw_tx)
-    let is_batch_mode = cli.message.is_some() || cli.thread.is_some() || cli.git.is_some();
     let ingestor = Ingestor::new(
         settings.clone(),
         db.clone(),
         raw_tx.clone(),
         cli.download,
         cli.track,
-        cli.message,
-        cli.thread,
-        cli.git,
-        cli.baseline,
     );
     let ingestor_handle = tokio::spawn(async move {
         if let Err(e) = ingestor.run().await {
@@ -488,32 +462,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Start Reviewer Service
-    if !cli.ingest_only {
-        let reviewer = Reviewer::new(db.clone(), settings.clone());
-        tokio::spawn(async move {
-            reviewer.start().await;
-        });
-    } else {
-        info!("Ingestion only mode enabled - Reviewer service skipped");
-    }
+    let reviewer = Reviewer::new(db.clone(), settings.clone());
+    tokio::spawn(async move {
+        reviewer.start().await;
+    });
 
-    if is_batch_mode {
-        info!("Batch mode detected, waiting for completion...");
-        if let Err(e) = ingestor_handle.await {
-            error!("Ingestor task panicked: {}", e);
-        }
-        if let Err(e) = parser_handle.await {
-            error!("Parser task panicked: {}", e);
-        }
-        if let Err(e) = db_worker_handle.await {
-            error!("DB Worker task panicked: {}", e);
-        }
-        info!("Batch processing complete. Exiting.");
-    } else {
-        // Keep the main thread running
-        tokio::signal::ctrl_c().await?;
-        info!("Shutting down...");
-    }
+    // Keep the main thread running
+    tokio::signal::ctrl_c().await?;
+    info!("Shutting down...");
+
+    // Abort handles
+    ingestor_handle.abort();
+    parser_handle.abort();
 
     Ok(())
 }
@@ -949,17 +909,17 @@ mod tests {
 
     #[test]
     fn test_cli_parsing() {
-        let args = vec!["sashiko", "--download", "100", "--track", "--api"];
+        let args = vec!["sashiko", "--download", "100", "--track", "--no-api"];
         let cli = Cli::parse_from(args);
         assert_eq!(cli.download, Some(100));
         assert!(cli.track);
-        assert!(cli.api);
+        assert!(cli.no_api);
 
         let args = vec!["sashiko"];
         let cli = Cli::parse_from(args);
         assert_eq!(cli.download, None);
         assert!(!cli.track);
-        assert!(!cli.api);
+        assert!(!cli.no_api);
     }
 
     #[test]
@@ -982,23 +942,6 @@ mod tests {
         let args = vec!["sashiko"];
         let cli = Cli::parse_from(args);
         assert_eq!(cli.port, None);
-    }
-
-    #[test]
-    fn test_cli_message_thread() {
-        let args = vec!["sashiko", "--message", "123", "--thread", "456"];
-        let cli = Cli::parse_from(args);
-        assert_eq!(cli.message, Some(vec!["123".to_string()]));
-        assert_eq!(cli.thread, Some(vec!["456".to_string()]));
-
-        let args = vec!["sashiko", "--message", "1", "--message", "2"];
-        let cli = Cli::parse_from(args);
-        assert_eq!(cli.message, Some(vec!["1".to_string(), "2".to_string()]));
-
-        let args = vec!["sashiko"];
-        let cli = Cli::parse_from(args);
-        assert_eq!(cli.message, None);
-        assert_eq!(cli.thread, None);
     }
 
     #[test]

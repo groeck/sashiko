@@ -20,7 +20,7 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc::Sender;
 use tokio::time::{Duration, sleep};
@@ -32,24 +32,15 @@ pub struct Ingestor {
     sender: Sender<Event>,
     download: Option<usize>,
     nntp_enabled: bool,
-    message_ids: Option<Vec<String>>,
-    thread_ids: Option<Vec<String>>,
-    git_source: Option<String>,
-    baseline: Option<String>,
 }
 
 impl Ingestor {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         settings: Settings,
         db: Arc<Database>,
         sender: Sender<Event>,
         download: Option<usize>,
         nntp_enabled: bool,
-        message_ids: Option<Vec<String>>,
-        thread_ids: Option<Vec<String>>,
-        git_source: Option<String>,
-        baseline: Option<String>,
     ) -> Self {
         Self {
             settings,
@@ -57,10 +48,6 @@ impl Ingestor {
             sender,
             download,
             nntp_enabled,
-            message_ids,
-            thread_ids,
-            git_source,
-            baseline,
         }
     }
 
@@ -87,88 +74,6 @@ impl Ingestor {
     }
 
     pub async fn run(&self) -> Result<()> {
-        let mut work_done = false;
-
-        if let Some(msg_ids) = &self.message_ids {
-            // Try to connect to NNTP for batch ingestion
-            let mut nntp_client = match NntpClient::connect(
-                &self.settings.nntp.server,
-                self.settings.nntp.port,
-            )
-            .await
-            {
-                Ok(c) => Some(c),
-                Err(e) => {
-                    warn!(
-                        "Failed to connect to NNTP for batch ingestion: {}. Falling back to HTTP.",
-                        e
-                    );
-                    None
-                }
-            };
-
-            for msg_id in msg_ids {
-                info!("Ingesting specific message: {}", msg_id);
-                let mut ingested = false;
-
-                if let Some(client) = &mut nntp_client {
-                    let nntp_id = format!("<{}>", msg_id);
-                    match client.article(&nntp_id).await {
-                        Ok(lines) => {
-                            self.sender
-                                .send(Event::ArticleFetched {
-                                    group: "manual".to_string(),
-                                    article_id: msg_id.clone(),
-                                    content: lines,
-                                    raw: None,
-                                    baseline: self.baseline.clone(),
-                                })
-                                .await?;
-                            info!("Successfully ingested message {} via NNTP", msg_id);
-                            ingested = true;
-                        }
-                        Err(e) => {
-                            warn!("NNTP fetch failed for {}: {}", msg_id, e);
-                        }
-                    }
-                }
-
-                if !ingested {
-                    if let Err(e) = self.ingest_message_by_id(msg_id).await {
-                        error!("Failed to ingest message {}: {}", msg_id, e);
-                    }
-                }
-            }
-
-            if let Some(mut client) = nntp_client {
-                let _ = client.quit().await;
-            }
-
-            work_done = true;
-        }
-
-        if let Some(thread_ids) = &self.thread_ids {
-            for thread_id in thread_ids {
-                info!("Ingesting specific thread: {}", thread_id);
-                if let Err(e) = self.ingest_thread_by_id(thread_id).await {
-                    error!("Failed to ingest thread {}: {}", thread_id, e);
-                }
-            }
-            work_done = true;
-        }
-
-        if let Some(git_source) = &self.git_source {
-            info!("Ingesting from git source: {}", git_source);
-            if let Err(e) = self.run_git_ingestion(git_source).await {
-                error!("Failed to ingest from git source {}: {}", git_source, e);
-            }
-            work_done = true;
-        }
-
-        if work_done {
-            return Ok(());
-        }
-
         if let Some(n) = self.download {
             info!(
                 "Bootstrap requested: downloading/ingesting last {} messages from git archive",
@@ -185,240 +90,6 @@ impl Ingestor {
             info!("NNTP ingestor disabled (default). Use --track to enable.");
         }
 
-        Ok(())
-    }
-
-    async fn ingest_message_by_id(&self, msg_id: &str) -> Result<()> {
-        let url = format!("https://lore.kernel.org/all/{}/raw", msg_id);
-        info!("Fetching raw message from {}", url);
-
-        let output = Command::new("curl")
-            .arg("-s")
-            .arg("-L") // Follow redirects
-            .arg(&url)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to fetch message (status: {}): {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
-        let content = output.stdout;
-        if content.is_empty() {
-            return Err(anyhow!("Empty response from {}", url));
-        }
-
-        // We use "manual" as group name for manually ingested messages
-        self.sender
-            .send(Event::ArticleFetched {
-                group: "manual".to_string(),
-                article_id: msg_id.to_string(),
-                content: Vec::new(),
-                raw: Some(content),
-                baseline: self.baseline.clone(),
-            })
-            .await?;
-
-        info!("Successfully ingested message {}", msg_id);
-        Ok(())
-    }
-
-    async fn ingest_thread_by_id(&self, msg_id: &str) -> Result<()> {
-        let url = format!("https://lore.kernel.org/all/{}/t.mbox.gz", msg_id);
-        info!("Fetching thread mbox from {}", url);
-
-        // curl ... | gunzip
-        let mut curl_cmd = Command::new("bash");
-        curl_cmd
-            .arg("-c")
-            .arg(format!("curl -s -L {} | gunzip", url))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut child = curl_cmd.spawn()?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
-        let reader = BufReader::new(stdout);
-
-        self.ingest_from_mbox_reader(
-            reader,
-            self.baseline.clone(),
-            &format!("thread {}", msg_id),
-            "lore-mbox",
-        )
-        .await?;
-
-        let status = child.wait().await?;
-        if !status.success() {
-            warn!("curl/gunzip process exited with error");
-        }
-
-        Ok(())
-    }
-
-    async fn ingest_from_mbox_reader<R: AsyncBufRead + Unpin>(
-        &self,
-        mut reader: R,
-        baseline: Option<String>,
-        source_desc: &str,
-        group: &str,
-    ) -> Result<usize> {
-        let mut current_email = Vec::new();
-        let mut count = 0;
-        let mut line = Vec::new();
-
-        loop {
-            line.clear();
-            let bytes_read = reader.read_until(b'\n', &mut line).await?;
-            if bytes_read == 0 {
-                break;
-            }
-
-            // check if line starts with "From "
-            if is_mbox_separator(&line) {
-                if !current_email.is_empty() {
-                    // Process previous email
-                    self.process_mbox_email(&current_email, baseline.clone(), group)
-                        .await?;
-                    count += 1;
-                    current_email.clear();
-                }
-                // We don't include the "From " line
-            } else {
-                current_email.extend_from_slice(&line);
-            }
-        }
-
-        // Process last email
-        if !current_email.is_empty() {
-            self.process_mbox_email(&current_email, baseline, group)
-                .await?;
-            count += 1;
-        }
-
-        info!(
-            "Successfully ingested {} messages from {}",
-            count, source_desc
-        );
-        Ok(count)
-    }
-
-    async fn run_git_ingestion(&self, range: &str) -> Result<()> {
-        let repo_path = std::path::PathBuf::from(&self.settings.git.repository_path);
-        if !repo_path.exists() {
-            return Err(anyhow!("Git repository not found at {:?}", repo_path));
-        }
-
-        // Determine baseline
-        let baseline = if let Some(b) = &self.baseline {
-            Some(b.clone())
-        } else {
-            // Try to deduce baseline from range
-            match crate::git_ops::get_range_base(&repo_path, range).await {
-                Ok(b) => {
-                    info!("Deduced baseline for range {}: {}", range, b);
-                    Some(b)
-                }
-                Err(e) => {
-                    warn!("Failed to deduce baseline for range {}: {}", range, e);
-                    None
-                }
-            }
-        };
-
-        // Calculate commit count for the range to set total_parts correctly
-        let count_output = Command::new("git")
-            .current_dir(&repo_path)
-            .args(["-c", "safe.bareRepository=all"])
-            .arg("rev-list")
-            .arg("--count")
-            .arg(range)
-            .output()
-            .await?;
-
-        let total_count = if count_output.status.success() {
-            String::from_utf8_lossy(&count_output.stdout)
-                .trim()
-                .parse::<usize>()
-                .unwrap_or(0)
-        } else {
-            warn!(
-                "Failed to count commits in range {}: {}",
-                range,
-                String::from_utf8_lossy(&count_output.stderr)
-            );
-            0
-        };
-
-        info!(
-            "Generating patches for range {} from {:?} (count: {})",
-            range, repo_path, total_count
-        );
-
-        let mut cmd = Command::new("git");
-        cmd.current_dir(&repo_path)
-            .args(["-c", "safe.bareRepository=all"])
-            .arg("format-patch")
-            .arg("--stdout")
-            .arg("--thread")
-            // .arg("--base=auto") // Optional: useful if we want base info in the patch, but we are setting it manually
-            .arg(range)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut child = cmd.spawn()?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
-        let reader = BufReader::new(stdout);
-
-        self.ingest_from_mbox_reader(
-            reader,
-            baseline,
-            &format!("git range {}", range),
-            &format!("git-import:{}:{}", total_count, range),
-        )
-        .await?;
-
-        let status = child.wait().await?;
-        if !status.success() {
-            return Err(anyhow!("git format-patch failed"));
-        }
-
-        Ok(())
-    }
-
-    async fn process_mbox_email(
-        &self,
-        raw_bytes: &[u8],
-        baseline: Option<String>,
-        group: &str,
-    ) -> Result<()> {
-        let msg_id = extract_message_id(raw_bytes);
-
-        // Skip if empty (e.g. mbox artifacts)
-        if raw_bytes.iter().all(|b| b.is_ascii_whitespace()) {
-            return Ok(());
-        }
-
-        self.sender
-            .send(Event::ArticleFetched {
-                group: group.to_string(),
-                article_id: msg_id,
-                content: Vec::new(),
-                raw: Some(raw_bytes.to_vec()),
-                baseline,
-            })
-            .await?;
         Ok(())
     }
 

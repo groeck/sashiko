@@ -34,6 +34,7 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub sender: mpsc::Sender<Event>,
     pub fetch_sender: mpsc::Sender<FetchRequest>,
+    pub read_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +118,7 @@ pub async fn run_server(
         db,
         sender,
         fetch_sender,
+        read_only: settings.read_only,
     });
 
     let app = Router::new()
@@ -170,6 +172,10 @@ async fn submit_patch(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SubmitRequest>,
 ) -> Result<Json<SubmitResponse>, StatusCode> {
+    if state.read_only {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     if !addr.ip().is_loopback() {
         info!("Refused patch submission from non-localhost: {}", addr);
         return Err(StatusCode::FORBIDDEN);
@@ -513,6 +519,10 @@ async fn rerun_patchset(
     State(state): State<Arc<AppState>>,
     Query(query): Query<PatchQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    if state.read_only {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     if !addr.ip().is_loopback() {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -535,6 +545,10 @@ async fn rerun_patch(
     State(state): State<Arc<AppState>>,
     Query(query): Query<RerunPatchQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    if state.read_only {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     if !addr.ip().is_loopback() {
         return Err(StatusCode::FORBIDDEN);
     }
