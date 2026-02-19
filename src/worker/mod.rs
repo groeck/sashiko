@@ -23,7 +23,6 @@ use crate::ai::{AiMessage, AiProvider, AiRequest, AiResponseFormat, AiRole};
 use crate::worker::prompts::PromptRegistry;
 use crate::worker::tools::ToolBox;
 use anyhow::Result;
-use regex::Regex;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -265,8 +264,6 @@ impl Worker {
         let mut final_history_before_pruning = Vec::new();
         let mut final_history_after_pruning = Vec::new();
 
-        let re_json_fallback = Regex::new(r"(?s)\{.*\}").unwrap();
-
         loop {
             turns += 1;
             if turns > self.max_interactions {
@@ -475,28 +472,10 @@ impl Worker {
                 let json_val: Value = match serde_json::from_str(clean_text) {
                     Ok(v) => v,
                     Err(e) => {
-                        // Fallback: try to find the first '{' and last '}'
-                        if let Some(mat) = re_json_fallback.find(final_text.as_str()) {
-                            let possible_json = mat.as_str();
-                            match serde_json::from_str(possible_json) {
-                                Ok(v) => v,
-                                Err(_) => {
-                                    return Ok(WorkerResult {
-                                        output: None,
-                                        error: Some(format!(
-                                            "Failed to parse JSON response (even after extraction): {}. Text: {}",
-                                            e, final_text
-                                        )),
-                                        input_context,
-                                        history: self.history.clone(),
-                                        history_before_pruning: final_history_before_pruning,
-                                        history_after_pruning: final_history_after_pruning,
-                                        tokens_in: total_tokens_in,
-                                        tokens_out: total_tokens_out,
-                                        tokens_cached: total_tokens_cached,
-                                    });
-                                }
-                            }
+                        // Fallback: scan for JSON objects
+                        let candidates = find_json_candidates(final_text.as_str());
+                        if let Some(v) = candidates.last() {
+                            v.clone()
                         } else {
                             return Ok(WorkerResult {
                                 output: None,
@@ -630,4 +609,57 @@ mod tests {
         let content = "commit 123\n\n> #include <stdio.h>\n> void main() {}\n\nComment";
         assert!(validate_inline_format(content).is_ok());
     }
+}
+
+fn find_json_candidates(text: &str) -> Vec<Value> {
+    let mut candidates = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '{' {
+            if let Some(end) = find_matching_brace(&chars, i) {
+                let candidate: String = chars[i..=end].iter().collect();
+                if let Ok(v) = serde_json::from_str(&candidate) {
+                    candidates.push(v);
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    candidates
+}
+
+fn find_matching_brace(chars: &[char], start: usize) -> Option<usize> {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for i in start..chars.len() {
+        let c = chars[i];
+
+        if in_string {
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else {
+            if c == '"' {
+                in_string = true;
+            } else if c == '{' {
+                depth += 1;
+            } else if c == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
 }
