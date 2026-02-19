@@ -107,6 +107,8 @@ pub struct ReviewSettings {
     pub timeout_seconds: u64,
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
+    #[serde(default)]
+    pub ignore_files: Vec<String>,
 }
 
 fn default_review_timeout() -> u64 {

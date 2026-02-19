@@ -36,3 +36,4 @@ concurrency = 24
 worktree_dir = "review_trees"
 timeout_seconds = 3600
 max_retries = 3
+ignore_files = ["MAINTAINERS", ".gitignore", "LICENSES/"]

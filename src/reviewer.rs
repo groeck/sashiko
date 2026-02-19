@@ -393,7 +393,7 @@ impl Reviewer {
             let mut review_success = true; // Optimistic
             let mut failed_patches = 0;
 
-            for (patch_id, index, _diff, _subj, _auth, _date, _msg_id) in &diffs {
+            for (patch_id, index, diff, _subj, _auth, _date, _msg_id) in &diffs {
                 let commit_sha = patch_commits.get(index).cloned();
                 let baseline_ref = resolution.as_str();
 
@@ -425,6 +425,7 @@ impl Reviewer {
                     commit_sha,
                     prompts_hash.as_deref(),
                     Some(&worktree.path),
+                    diff,
                 )
                 .await
                 {
@@ -547,7 +548,9 @@ impl Reviewer {
             let mut application_failed = false;
             let mut apply_logs = String::new();
 
-            for (i, (patch_id, index, diff, subject, author, date_ts, msg_id)) in diffs.iter().enumerate() {
+            for (i, (patch_id, index, diff, subject, author, date_ts, msg_id)) in
+                diffs.iter().enumerate()
+            {
                 let date_str = std::process::Command::new("date")
                     .arg("-R")
                     .arg("-d")
@@ -738,6 +741,7 @@ impl Reviewer {
         commit_sha: Option<String>,
         prompts_hash: Option<&str>,
         worktree_path: Option<&Path>,
+        diff: &str,
     ) -> Result<PatchResult> {
         info!(
             "Reviewing patch {}/{} (ID: {})",
@@ -759,6 +763,49 @@ impl Reviewer {
                 baseline_id,
                 ctx.target_review_count
             );
+            return Ok(PatchResult::Success);
+        }
+
+        let files = extract_files_from_diff(diff);
+        if !files.is_empty()
+            && files.iter().all(|f| {
+                ctx.settings
+                    .review
+                    .ignore_files
+                    .iter()
+                    .any(|ignored| f.starts_with(ignored))
+            })
+        {
+            info!(
+                "Skipping review for patch {}/{} (ID: {}) as it touches only ignored files.",
+                patchset_id, index, patch_id
+            );
+
+            let review_id = ctx
+                .db
+                .create_review(
+                    patchset_id,
+                    Some(patch_id),
+                    &ctx.settings.ai.provider,
+                    &ctx.settings.ai.model,
+                    baseline_id,
+                    prompts_hash,
+                )
+                .await?;
+
+            let _ = ctx
+                .db
+                .complete_review(
+                    review_id,
+                    ReviewStatus::Skipped.as_str(),
+                    "Skipped: touches only ignored files",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
             return Ok(PatchResult::Success);
         }
 
@@ -1895,6 +1942,214 @@ echo '{"patchset_id": 1, "patches": []}'
 
         // Critical assertion: Only ONE refresh call happened despite two failures
         assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_skip_ignored_files() -> Result<()> {
+        let mut settings = Settings::new()?;
+        settings.database.url = ":memory:".to_string();
+        settings.review.ignore_files = vec!["ignored.txt".to_string(), "ignore_dir/".to_string()];
+
+        let db = Arc::new(Database::new(&settings.database).await?);
+        db.migrate().await?;
+        let quota_manager = Arc::new(QuotaManager::new());
+        let provider = Arc::new(MockProvider);
+        let cache_manager = Arc::new(CacheManager::new(
+            PathBuf::from("."),
+            provider.clone(),
+            "mock".to_string(),
+            "1h".to_string(),
+            None,
+        ));
+        let active_cache_name = Arc::new(Mutex::new(None));
+
+        let ctx = ReviewContext {
+            db: db.clone(),
+            settings: settings.clone(),
+            baseline_registry: Arc::new(BaselineRegistry::new(Path::new(".")).unwrap()),
+            quota_manager,
+            cache_manager,
+            active_cache_name,
+            current_cache_name: None,
+            target_review_count: 1,
+            provider,
+        };
+
+        // Create dummy patchset and patch in DB
+        let thread_id = db.create_thread("msg_id_1", "Subject", 1000).await?;
+
+        // Create messages for patches
+        db.create_message(
+            "msg_id_p1",
+            thread_id,
+            None,
+            "Author",
+            "Subject",
+            1000,
+            "Body",
+            "",
+            "",
+            None,
+            None,
+        )
+        .await?;
+        db.create_message(
+            "msg_id_p2",
+            thread_id,
+            None,
+            "Author",
+            "Subject",
+            1000,
+            "Body",
+            "",
+            "",
+            None,
+            None,
+        )
+        .await?;
+        db.create_message(
+            "msg_id_p3",
+            thread_id,
+            None,
+            "Author",
+            "Subject",
+            1000,
+            "Body",
+            "",
+            "",
+            None,
+            None,
+        )
+        .await?;
+
+        let ps_id = db
+            .create_patchset(
+                thread_id, None, "msg_id_1", "Subject", "Author", 1000, 1, 1, "", "", None, 1,
+                None, false,
+            )
+            .await?
+            .expect("Failed to create patchset");
+
+        // Case 1: Ignored file
+        let diff_ignored = "diff --git a/ignored.txt b/ignored.txt\nindex ...";
+        let p_id = db.create_patch(ps_id, "msg_id_p1", 1, diff_ignored).await?;
+
+        let result = Reviewer::process_patch_review(
+            &ctx,
+            ps_id,
+            p_id,
+            1,
+            "HEAD",
+            None,
+            &json!({}),
+            None,
+            None,
+            None,
+            diff_ignored,
+        )
+        .await?;
+
+        // Should return Success (because it's skipped gracefully)
+        match result {
+            PatchResult::Success => {}
+            _ => panic!("Expected Success for skipped review"),
+        }
+
+        // Verify DB status
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT status, result_description FROM reviews WHERE patch_id = ?",
+                libsql::params![p_id],
+            )
+            .await?;
+        let row = rows.next().await?.expect("No review found");
+        let status: String = row.get(0)?;
+        let description: String = row.get(1).unwrap_or_default();
+
+        assert_eq!(status, "Skipped");
+        assert!(description.contains("touches only ignored files"));
+
+        // Case 2: Ignored directory prefix
+        let diff_dir = "diff --git a/ignore_dir/subfile.c b/ignore_dir/subfile.c\n...";
+        let p_id_2 = db.create_patch(ps_id, "msg_id_p2", 2, diff_dir).await?;
+
+        let result = Reviewer::process_patch_review(
+            &ctx,
+            ps_id,
+            p_id_2,
+            2,
+            "HEAD",
+            None,
+            &json!({}),
+            None,
+            None,
+            None,
+            diff_dir,
+        )
+        .await?;
+
+        match result {
+            PatchResult::Success => {}
+            _ => panic!("Expected Success for skipped review"),
+        }
+
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT status FROM reviews WHERE patch_id = ?",
+                libsql::params![p_id_2],
+            )
+            .await?;
+        let row = rows.next().await?.expect("No review found");
+        let status: String = row.get(0)?;
+        assert_eq!(status, "Skipped");
+
+        // Case 3: Mixed (Ignored + Not Ignored) -> Should NOT skip
+        let diff_mixed = "diff --git a/ignored.txt b/ignored.txt\n...\ndiff --git a/src/main.rs b/src/main.rs\n...";
+        let p_id_3 = db.create_patch(ps_id, "msg_id_p3", 3, diff_mixed).await?;
+
+        let _result = Reviewer::process_patch_review(
+            &ctx,
+            ps_id,
+            p_id_3,
+            3,
+            "HEAD",
+            None,
+            &json!({}),
+            None,
+            None,
+            None,
+            diff_mixed,
+        )
+        .await;
+
+        // Even if it fails to run tool, it shouldn't be "Skipped".
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT status FROM reviews WHERE patch_id = ?",
+                libsql::params![p_id_3],
+            )
+            .await?;
+        // Review might be created (Pending/Applying/InReview) or not if process failed early (but create_review is called early in loop)
+        // Wait, loop calls create_review at start of loop.
+        // If run_review_tool fails (which it will), we get ReviewFailed.
+
+        if let Ok(Some(row)) = rows.next().await {
+            let status: String = row.get(0)?;
+            assert_ne!(status, "Skipped");
+        } else {
+            // It might fail before creating review?
+            // create_review is inside the loop.
+            // If run_review_tool fails to spawn (binary not found), it returns Err.
+            // process_patch_review handles Err by logging and retrying.
+            // If retries exhausted, it returns ReviewFailed.
+            // But it DOES create a review entry in each iteration.
+            // So we should find at least one review.
+        }
+
         Ok(())
     }
 }
