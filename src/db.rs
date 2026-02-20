@@ -2568,28 +2568,32 @@ impl Database {
 
         let root_msg_id = format!("{}@sashiko.local", article_id);
 
+        let clid_candidates = vec![article_id.to_string(), root_msg_id.clone()];
+
         // 1. Check if it already exists
-        let mut rows = self
-            .conn
-            .query(
-                "SELECT id, status FROM patchsets WHERE cover_letter_message_id = ?",
-                libsql::params![root_msg_id.clone()],
-            )
-            .await?;
+        for clid in clid_candidates {
+            let mut rows = self
+                .conn
+                .query(
+                    "SELECT id, status FROM patchsets WHERE cover_letter_message_id = ?",
+                    libsql::params![clid.clone()],
+                )
+                .await?;
 
-        if let Ok(Some(row)) = rows.next().await {
-            let id: i64 = row.get(0)?;
-            let status: String = row.get(1).unwrap_or_default();
+            if let Ok(Some(row)) = rows.next().await {
+                let id: i64 = row.get(0)?;
+                let status: String = row.get(1).unwrap_or_default();
 
-            // Only reset to Fetching if it failed or is currently fetching.
-            // We don't want to reset if it is already Incomplete, Pending, or Reviewed.
-            if status == "Failed" || status == "Fetching" {
-                self.conn.execute(
-                    "UPDATE patchsets SET status = 'Fetching', failed_reason = NULL WHERE id = ?",
-                    libsql::params![id]
-                ).await?;
+                // Only reset to Fetching if it failed or is currently fetching.
+                // We don't want to reset if it is already Incomplete, Pending, or Reviewed.
+                if status == "Failed" || status == "Fetching" {
+                    self.conn.execute(
+                        "UPDATE patchsets SET status = 'Fetching', failed_reason = NULL WHERE id = ?",
+                        libsql::params![id]
+                    ).await?;
+                }
+                return Ok(id);
             }
-            return Ok(id);
         }
 
         // 2. Ensure a placeholder thread and message exist to satisfy Foreign Key constraints
