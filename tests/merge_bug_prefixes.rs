@@ -53,6 +53,8 @@ async fn test_merge_prefixes_mismatch_should_split() {
             1,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -82,6 +84,8 @@ async fn test_merge_prefixes_mismatch_should_split() {
             2,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -120,6 +124,8 @@ async fn test_merge_prefixes_match_should_merge() {
             1,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -148,6 +154,8 @@ async fn test_merge_prefixes_match_should_merge() {
             2,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()

@@ -69,6 +69,8 @@ async fn test_cover_letter_merges_into_singleton() {
             1,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -116,6 +118,8 @@ async fn test_cover_letter_merges_into_singleton() {
             0,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()

@@ -51,6 +51,8 @@ async fn test_merge_different_series_same_author_should_not_merge() {
             1, // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -75,6 +77,8 @@ async fn test_merge_different_series_same_author_should_not_merge() {
             1, // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()

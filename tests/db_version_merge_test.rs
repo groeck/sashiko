@@ -84,6 +84,8 @@ async fn test_merge_different_versions_should_fail() {
             1,    // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -111,6 +113,8 @@ async fn test_merge_different_versions_should_fail() {
             1,       // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -148,6 +152,8 @@ async fn test_merge_same_versions_should_merge() {
             1,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -171,6 +177,8 @@ async fn test_merge_same_versions_should_merge() {
             1,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -242,6 +250,8 @@ async fn test_merge_different_versions_series_should_fail() {
             1,    // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -268,6 +278,8 @@ async fn test_merge_different_versions_series_should_fail() {
             1,       // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()

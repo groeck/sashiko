@@ -67,6 +67,8 @@ async fn test_cover_letter_merges_into_full_patchset() {
             1,    // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -110,6 +112,8 @@ async fn test_cover_letter_merges_into_full_patchset() {
             2,    // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -160,6 +164,8 @@ async fn test_cover_letter_merges_into_full_patchset() {
             0,    // index
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()

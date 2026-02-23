@@ -68,6 +68,10 @@ impl PromptRegistry {
         self.append_file(&mut content, "technical-patterns.md")
             .await?;
         self.append_file(&mut content, "severity.md").await?;
+        self.append_file(&mut content, "callstack.md").await?;
+        self.append_file(&mut content, "false-positive-guide.md")
+            .await?;
+        self.append_file(&mut content, "pointer-guards.md").await?;
 
         // 3. Subsystem Guidelines
         let subsystem_dir = self.base_dir.join("subsystem");
@@ -95,6 +99,9 @@ impl PromptRegistry {
                         | "debugging.md"
                         | "lore-thread.md"
                         | "severity.md"
+                        | "callstack.md"
+                        | "false-positive-guide.md"
+                        | "pointer-guards.md"
                 )
             })
             .await?;

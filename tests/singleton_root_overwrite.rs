@@ -68,6 +68,8 @@ async fn test_singleton_root_overwrite_prevention() {
             2,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -97,6 +99,8 @@ async fn test_singleton_root_overwrite_prevention() {
             1,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()

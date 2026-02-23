@@ -63,6 +63,8 @@ Diff...";
             meta1.index,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -96,6 +98,8 @@ Diff...";
             meta2.index,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()

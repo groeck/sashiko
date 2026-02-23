@@ -54,6 +54,8 @@ async fn test_merge_same_email_different_name_format() {
             1,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -77,6 +79,8 @@ async fn test_merge_same_email_different_name_format() {
             2,
             None,
             true,
+            None,
+            None,
         )
         .await
         .unwrap()
