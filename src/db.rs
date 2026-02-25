@@ -31,8 +31,7 @@ pub struct Subsystem {
     pub mailing_list_address: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[derive(Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PatchsetRow {
     pub id: i64,
     pub subject: Option<String>,
@@ -59,8 +58,7 @@ pub struct PatchsetRow {
     pub provider: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[derive(Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MessageRow {
     pub id: i64,
     pub message_id: String,
@@ -231,6 +229,8 @@ impl Database {
     pub async fn get_patchset_details_by_msgid(
         &self,
         msg_id: &str,
+        page: Option<u32>,
+        limit: Option<u32>,
     ) -> Result<Option<serde_json::Value>> {
         // 1. Try to find a patchset where this is the cover letter
         let mut rows = self
@@ -242,7 +242,7 @@ impl Database {
             .await?;
         if let Ok(Some(row)) = rows.next().await {
             let id: i64 = row.get(0)?;
-            return self.get_patchset_details(id).await;
+            return self.get_patchset_details(id, page, limit).await;
         }
 
         // 2. Fallback: Find a patchset that contains this message as a patch
@@ -255,7 +255,7 @@ impl Database {
             .await?;
         if let Ok(Some(row)) = rows.next().await {
             let id: i64 = row.get(0)?;
-            return self.get_patchset_details(id).await;
+            return self.get_patchset_details(id, page, limit).await;
         }
 
         Ok(None)
@@ -2236,7 +2236,12 @@ impl Database {
         }
     }
 
-    pub async fn get_patchset_details(&self, id: i64) -> Result<Option<serde_json::Value>> {
+    pub async fn get_patchset_details(
+        &self,
+        id: i64,
+        page: Option<u32>,
+        limit: Option<u32>,
+    ) -> Result<Option<serde_json::Value>> {
         let mut rows = self
             .conn
             .query(
@@ -2291,44 +2296,10 @@ impl Database {
                 None
             };
 
-            // Fetch reviews
-            let mut reviews = Vec::new();
-            let mut rev_rows = self
-                .conn
-                .query(
-                    "SELECT r.summary, r.created_at, ai.input_context, ai.output_raw, 
-                            r.result_description,
-                            r.status, r.inline_review, r.logs, ai.tokens_in, ai.tokens_out, r.patch_id, r.id, ai.tokens_cached
-                 FROM reviews r
-                 LEFT JOIN ai_interactions ai ON r.interaction_id = ai.id
-                 WHERE r.patchset_id = ?
-                 ORDER BY r.created_at ASC",
-                    libsql::params![pid],
-                )
-                .await?;
-
-            while let Ok(Some(r)) = rev_rows.next().await {
-                reviews.push(serde_json::json!({
-                    "summary": r.get::<Option<String>>(0).ok(),
-                    "created_at": r.get::<Option<i64>>(1).ok(),
-                    "input": r.get::<Option<String>>(2).ok(),
-                    "output": r.get::<Option<String>>(3).ok(),
-                    "result": r.get::<Option<String>>(4).ok(),
-                    "status": r.get::<Option<String>>(5).ok(),
-                    "inline_review": r.get::<Option<String>>(6).ok(),
-                    "logs": r.get::<Option<String>>(7).ok(),
-                    "tokens_in": r.get::<Option<u32>>(8).ok(),
-                    "tokens_out": r.get::<Option<u32>>(9).ok(),
-                    "patch_id": r.get::<Option<i64>>(10).ok(),
-                    "id": r.get::<i64>(11).ok(),
-                    "tokens_cached": r.get::<Option<u32>>(12).ok(),
-                    // Inject patchset-level info for UI compatibility
-                    "model": model_name,
-                    "provider": provider,
-                    "prompts_hash": prompts_git_hash,
-                    "baseline": baseline
-                }));
-            }
+            // Calculate pagination
+            let limit_val = limit.unwrap_or(50);
+            let page_val = page.unwrap_or(1);
+            let offset_val = limit_val * (page_val.saturating_sub(1));
 
             // Fetch subsystems
             let mut subsystems = Vec::new();
@@ -2345,8 +2316,22 @@ impl Database {
                 subsystems.push(row.get::<String>(0)?);
             }
 
+            // Count total patches
+            let mut total_patches = 0;
+            let mut count_rows = self
+                .conn
+                .query(
+                    "SELECT COUNT(*) FROM patches WHERE patchset_id = ?",
+                    libsql::params![pid],
+                )
+                .await?;
+            if let Ok(Some(row)) = count_rows.next().await {
+                total_patches = row.get::<i64>(0)?;
+            }
+
             // Fetch patches with subject and msg_db_id
             let mut patches = Vec::new();
+            let mut patch_ids = Vec::new();
             let mut patch_rows = self
                 .conn
                 .query(
@@ -2354,19 +2339,64 @@ impl Database {
                  FROM patches p
                  LEFT JOIN messages m ON p.message_id = m.message_id
                  WHERE p.patchset_id = ? 
-                 ORDER BY p.part_index ASC",
-                    libsql::params![pid],
+                 ORDER BY p.part_index ASC
+                 LIMIT ? OFFSET ?",
+                    libsql::params![pid, limit_val, offset_val],
                 )
                 .await?;
             while let Ok(Some(p)) = patch_rows.next().await {
+                let p_id: i64 = p.get(0)?;
+                patch_ids.push(p_id);
                 patches.push(serde_json::json!({
-                    "id": p.get::<i64>(0)?,
+                    "id": p_id,
                     "message_id": p.get::<String>(1)?,
                     "part_index": p.get::<Option<i64>>(2).ok(),
                     "msg_db_id": p.get::<Option<i64>>(3).ok(),
                     "subject": p.get::<Option<String>>(4).ok(),
                     "status": p.get::<Option<String>>(5).ok(),
                     "apply_error": p.get::<Option<String>>(6).ok(),
+                }));
+            }
+
+            // Fetch reviews
+            let mut reviews = Vec::new();
+            let mut in_clause = patch_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            if in_clause.is_empty() {
+                in_clause = "-1".to_string(); // Fallback so SQL doesn't error
+            }
+            let query_str = format!(
+                "SELECT r.summary, r.created_at, ai.input_context, ai.output_raw, 
+                        r.result_description, r.status, r.inline_review, r.logs, ai.tokens_in, ai.tokens_out, r.patch_id, r.id, ai.tokens_cached
+                 FROM reviews r
+                 LEFT JOIN ai_interactions ai ON r.interaction_id = ai.id
+                 WHERE r.patchset_id = ? AND (r.patch_id IS NULL OR r.patch_id IN ({}))
+                 ORDER BY r.created_at ASC", in_clause);
+
+            let mut params = vec![libsql::Value::Integer(pid)];
+            for &pid_val in &patch_ids {
+                params.push(libsql::Value::Integer(pid_val));
+            }
+
+            let mut rev_rows = self.conn.query(&query_str, params).await?;
+
+            while let Ok(Some(r)) = rev_rows.next().await {
+                reviews.push(serde_json::json!({
+                    "summary": r.get::<Option<String>>(0).ok(),
+                    "created_at": r.get::<Option<i64>>(1).ok(),
+                    "output": r.get::<Option<String>>(3).ok(),
+                    "result": r.get::<Option<String>>(4).ok(),
+                    "status": r.get::<Option<String>>(5).ok(),
+                    "inline_review": r.get::<Option<String>>(6).ok(),
+                    "logs": r.get::<Option<String>>(7).ok(),
+                    "tokens_in": r.get::<Option<u32>>(8).ok(),
+                    "tokens_out": r.get::<Option<u32>>(9).ok(),
+                    "patch_id": r.get::<Option<i64>>(10).ok(),
+                    "id": r.get::<i64>(11).ok(),
+                    "tokens_cached": r.get::<Option<u32>>(12).ok(),
+                    "model": model_name.clone(),
+                    "provider": provider.clone(),
+                    "prompts_hash": prompts_git_hash.clone(),
+                    "baseline": baseline.clone()
                 }));
             }
 
@@ -2400,6 +2430,9 @@ impl Database {
                 "to": to,
                 "cc": cc,
                 "total_parts": total_parts,
+                "total_patches_in_db": total_patches,
+                "page": page_val,
+                "limit": limit_val,
                 "received_parts": received_parts,
                 "reviews": reviews,
                 "patches": patches,
@@ -4191,7 +4224,7 @@ mod tests {
         db.create_patch(ps1, "msg1", 1, "").await.unwrap();
         db.create_patch(ps2, "msg2", 2, "").await.unwrap();
 
-        let details = db.get_patchset_details(ps1).await.unwrap().unwrap();
+        let details = db.get_patchset_details(ps1, None, None).await.unwrap().unwrap();
         assert_eq!(details["received_parts"], 2);
     }
 
@@ -4245,7 +4278,7 @@ mod tests {
         // 2. Add patch so it becomes full
         db.create_patch(ps1, msg_id, 1, "diff").await.unwrap();
 
-        let details = db.get_patchset_details(ps1).await.unwrap().unwrap();
+        let details = db.get_patchset_details(ps1, None, None).await.unwrap().unwrap();
         assert_eq!(details["received_parts"], 1);
         assert_eq!(details["total_parts"], 1);
 

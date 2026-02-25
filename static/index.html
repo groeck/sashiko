@@ -756,7 +756,7 @@
                         await renderListView();
                         break;
                     case 'patchset':
-                        await renderPatchsetView(route.id);
+                        await renderPatchsetView(route.id, route.query || {});
                         break;
                     case 'message':
                         await renderMessageView(route.id);
@@ -1310,8 +1310,10 @@
         // =====================================================================
         // PATCHSET DETAIL VIEW
         // =====================================================================
-        async function renderPatchsetView(id) {
-            const res = await fetch(`/api/patch?id=${encodeURIComponent(id)}`);
+        async function renderPatchsetView(id, query = {}) {
+            const page = parseInt(query.page) || 1;
+            const limit = parseInt(query.limit) || 50;
+            const res = await fetch(`/api/patch?id=${encodeURIComponent(id)}&page=${page}&limit=${limit}`);
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
             const data = await res.json();
 
@@ -1473,6 +1475,45 @@
 
             if (!reviewsHtml) reviewsHtml = '<p>No AI reviews yet.</p>';
 
+            let paginationHtml = '';
+            if (data.total_patches_in_db > data.limit) {
+                const totalPages = Math.ceil(data.total_patches_in_db / data.limit);
+                let pagesHtml = '';
+                
+                // Show a few pages around the current page
+                const maxPagesToShow = 9;
+                let startPage = Math.max(1, data.page - Math.floor(maxPagesToShow / 2));
+                let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
+                
+                if (endPage - startPage + 1 < maxPagesToShow) {
+                    startPage = Math.max(1, endPage - maxPagesToShow + 1);
+                }
+
+                if (startPage > 1) {
+                    pagesHtml += `<a href="#/patchset/${encodeURIComponent(data.id || data.message_id)}?page=1&limit=${data.limit}" style="padding:4px 8px; border:1px solid #ccc; border-radius:4px; margin:0 2px; text-decoration:none;">1</a>`;
+                    if (startPage > 2) {
+                         pagesHtml += `<span style="padding:4px 8px; margin:0 2px;">...</span>`;
+                    }
+                }
+
+                for (let i = startPage; i <= endPage; i++) {
+                    if (i === data.page) {
+                        pagesHtml += `<span style="padding:4px 8px; background:#007bff; color:white; border-radius:4px; margin:0 2px;">${i}</span>`;
+                    } else {
+                        pagesHtml += `<a href="#/patchset/${encodeURIComponent(data.id || data.message_id)}?page=${i}&limit=${data.limit}" style="padding:4px 8px; border:1px solid #ccc; border-radius:4px; margin:0 2px; text-decoration:none;">${i}</a>`;
+                    }
+                }
+
+                if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) {
+                         pagesHtml += `<span style="padding:4px 8px; margin:0 2px;">...</span>`;
+                    }
+                    pagesHtml += `<a href="#/patchset/${encodeURIComponent(data.id || data.message_id)}?page=${totalPages}&limit=${data.limit}" style="padding:4px 8px; border:1px solid #ccc; border-radius:4px; margin:0 2px; text-decoration:none;">${totalPages}</a>`;
+                }
+
+                paginationHtml = `<div style="margin:20px 0; text-align:center;">${pagesHtml}</div>`;
+            }
+
             // Only show baseline/thread section if NOT a direct git submission (heuristic: message_id is SHA or synthetic local ID or subject indicates git import)
             const isGitSubmission = (data.message_id && (/^[0-9a-f]{40}$/.test(data.message_id) || data.message_id.includes('@sashiko.local'))) || (data.subject && data.subject.startsWith('Git Import:'));
 
@@ -1606,6 +1647,7 @@
                     <h2 id="ai-reviews">AI Reviews</h2>
                     ${summaryHtml}
                     ${reviewsHtml}
+                    ${paginationHtml}
                 </div>
             `;
         }

@@ -163,6 +163,8 @@ pub struct MessagesResponse {
 #[derive(Deserialize)]
 pub struct PatchQuery {
     pub id: String,
+    pub page: Option<u32>,
+    pub per_page: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -417,14 +419,30 @@ async fn list_patchsets(
     let per_page = pagination.per_page.unwrap_or(50).clamp(1, 100);
     let offset = (page - 1) * per_page;
 
-    let items = if pagination.q.is_none() && pagination.mailing_list.is_none() && page == 1 && per_page == 50 {
-        state.patchsets_homepage_cache.get_or_fetch(|| async {
-            state.db.get_patchsets(per_page, offset, None, None).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        }).await?
+    let items = if pagination.q.is_none()
+        && pagination.mailing_list.is_none()
+        && page == 1
+        && per_page == 50
+    {
+        state
+            .patchsets_homepage_cache
+            .get_or_fetch(|| async {
+                state
+                    .db
+                    .get_patchsets(per_page, offset, None, None)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            })
+            .await?
     } else {
         state
             .db
-            .get_patchsets(per_page, offset, pagination.q.clone(), pagination.mailing_list.clone())
+            .get_patchsets(
+                per_page,
+                offset,
+                pagination.q.clone(),
+                pagination.mailing_list.clone(),
+            )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     };
@@ -463,14 +481,30 @@ async fn list_messages(
     let per_page = pagination.per_page.unwrap_or(50).clamp(1, 100);
     let offset = (page - 1) * per_page;
 
-    let items = if pagination.q.is_none() && pagination.mailing_list.is_none() && page == 1 && per_page == 50 {
-        state.messages_homepage_cache.get_or_fetch(|| async {
-            state.db.get_messages(per_page, offset, None, None).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        }).await?
+    let items = if pagination.q.is_none()
+        && pagination.mailing_list.is_none()
+        && page == 1
+        && per_page == 50
+    {
+        state
+            .messages_homepage_cache
+            .get_or_fetch(|| async {
+                state
+                    .db
+                    .get_messages(per_page, offset, None, None)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            })
+            .await?
     } else {
         state
             .db
-            .get_messages(per_page, offset, pagination.q.clone(), pagination.mailing_list.clone())
+            .get_messages(
+                per_page,
+                offset,
+                pagination.q.clone(),
+                pagination.mailing_list.clone(),
+            )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     };
@@ -507,10 +541,16 @@ async fn get_patchset(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let result = if let Ok(id_val) = query.id.parse::<i64>() {
         info!("Fetching details for patchset id: {}", id_val);
-        state.db.get_patchset_details(id_val).await
+        state
+            .db
+            .get_patchset_details(id_val, query.page, query.per_page)
+            .await
     } else {
         info!("Fetching details for patchset msgid: {}", query.id);
-        state.db.get_patchset_details_by_msgid(&query.id).await
+        state
+            .db
+            .get_patchset_details_by_msgid(&query.id, query.page, query.per_page)
+            .await
     };
 
     match result {
