@@ -676,7 +676,11 @@
             selectedIndex: -1,
             stats: null,
             mailingLists: [],
-            selectedList: ''
+            selectedList: '',
+            patchsetId: null,
+            patchsetPage: 1,
+            patchsetTotalPages: 1,
+            patchsetLimit: 50
         };
 
         // =====================================================================
@@ -1316,6 +1320,11 @@
             const res = await fetch(`/api/patch?id=${encodeURIComponent(id)}&page=${page}&limit=${limit}`);
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
             const data = await res.json();
+            
+            state.patchsetId = id;
+            state.patchsetPage = data.page || page;
+            state.patchsetLimit = data.limit || limit;
+            state.patchsetTotalPages = data.total_patches_in_db > 0 ? Math.ceil(data.total_patches_in_db / state.patchsetLimit) : 1;
 
             const date = formatDate(data.date, true);
             const patchMap = new Map();
@@ -2172,7 +2181,20 @@ ${escapeHtml((data.body || '(no body)').replace(/\n+$/, ''), true, false)}${data
                     window.scrollBy(0, 60);
                 } else if (e.key === 'k' || (e.ctrlKey && e.key === 'p')) {
                     window.scrollBy(0, -60);
-                } else if (e.key === 'q' || e.key === 'Backspace' || (e.key === 'h' && state.view !== 'list')) {
+                } else if (e.key === 'l' || e.key === 'ArrowRight') {
+                    if (state.view === 'patchset' && state.patchsetPage < state.patchsetTotalPages) {
+                        const basePath = `#/patchset/${encodeURIComponent(state.patchsetId)}`;
+                        navigate(`${basePath}?page=${state.patchsetPage + 1}&limit=${state.patchsetLimit}`);
+                    }
+                } else if (e.key === 'h' || e.key === 'ArrowLeft') {
+                    if (state.view === 'patchset' && state.patchsetPage > 1) {
+                        const basePath = `#/patchset/${encodeURIComponent(state.patchsetId)}`;
+                        navigate(`${basePath}?page=${state.patchsetPage - 1}&limit=${state.patchsetLimit}`);
+                    } else if (e.key === 'h') {
+                        e.preventDefault();
+                        goBack();
+                    }
+                } else if (e.key === 'q' || e.key === 'Backspace') {
                     e.preventDefault();
                     goBack();
                 } else if (e.key === 'g') {
