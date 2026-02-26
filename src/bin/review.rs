@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
     let plain_logs = std::env::var("SASHIKO_LOG_PLAIN").is_ok();
 
     let builder = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
+        .with_writer(sashiko::logging::IgnoreBrokenPipe(std::io::stderr))
         .with_ansi(!no_color);
 
     if plain_logs {
@@ -232,8 +232,8 @@ async fn main() -> Result<()> {
             if all_applied {
                 // 2. Prepare worktree context if reviewing a specific patch
                 // Only needed if we didn't use review_commit (which already sets context)
-                if args.review_commit.is_none() {
-                    if let Some(target_idx) = args.review_patch_index {
+                if args.review_commit.is_none()
+                    && let Some(target_idx) = args.review_patch_index {
 
                     // Optimization: Only reset if target_idx < max_index
                     let max_index = patches.iter().map(|p| p.index).max().unwrap_or(0);
@@ -289,7 +289,6 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                }
                 }
 
                 if patches_to_review.is_empty() {
@@ -399,21 +398,18 @@ async fn main() -> Result<()> {
 
                                 // Extract review_inline from JSON
                                 let mut inline_content = None;
-                                if let Some(output) = &result.output {
-                                    if let Some(content) = output.get("review_inline").and_then(|v| v.as_str()) {
+                                if let Some(output) = &result.output
+                                    && let Some(content) = output.get("review_inline").and_then(|v| v.as_str()) {
                                         inline_content = Some(content.to_string());
                                     }
-                                }
 
                                 // Check for missing inline review with findings
                                 let mut has_findings = false;
-                                if let Some(output) = &result.output {
-                                    if let Some(findings) = output.get("findings").and_then(|f| f.as_array()) {
-                                        if !findings.is_empty() {
+                                if let Some(output) = &result.output
+                                    && let Some(findings) = output.get("findings").and_then(|f| f.as_array())
+                                        && !findings.is_empty() {
                                             has_findings = true;
                                         }
-                                    }
-                                }
 
                                 if has_findings && inline_content.is_none() {
                                     error!("Review failure: Findings detected but review_inline field was missing or empty.");
@@ -541,35 +537,36 @@ async fn apply_single_patch(
     }
 
     // Legacy fallback: Check if message_id looks like a SHA
-    if let Some(sha) = &p.message_id {
-        if sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()) {
-            info!(
-                "Patch {} message_id looks like a SHA {}, checking out...",
-                p.index, sha
-            );
-            match worktree.reset_hard(sha).await {
-                Ok(_) => {
-                    if let Ok(show) = worktree.get_commit_show(sha).await {
-                        patch_shows.insert(p.index, show);
-                    }
-                    patch_shas.insert(p.index, sha.clone());
-                    patch_results.push(json!({
-                        "index": p.index,
-                        "status": "applied",
-                        "method": "checkout"
-                    }));
-                    return true;
+    if let Some(sha) = &p.message_id
+        && sha.len() == 40
+        && sha.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        info!(
+            "Patch {} message_id looks like a SHA {}, checking out...",
+            p.index, sha
+        );
+        match worktree.reset_hard(sha).await {
+            Ok(_) => {
+                if let Ok(show) = worktree.get_commit_show(sha).await {
+                    patch_shows.insert(p.index, show);
                 }
-                Err(e) => {
-                    error!("Failed to checkout commit {}: {}", sha, e);
-                    patch_results.push(json!({
-                        "index": p.index,
-                        "status": "error",
-                        "method": "checkout",
-                        "error": e.to_string()
-                    }));
-                    return false;
-                }
+                patch_shas.insert(p.index, sha.clone());
+                patch_results.push(json!({
+                    "index": p.index,
+                    "status": "applied",
+                    "method": "checkout"
+                }));
+                return true;
+            }
+            Err(e) => {
+                error!("Failed to checkout commit {}: {}", sha, e);
+                patch_results.push(json!({
+                    "index": p.index,
+                    "status": "error",
+                    "method": "checkout",
+                    "error": e.to_string()
+                }));
+                return false;
             }
         }
     }

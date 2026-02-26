@@ -89,7 +89,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    fmt().with_env_filter(env_filter).init();
+    fmt()
+        .with_env_filter(env_filter)
+        .with_writer(sashiko::logging::IgnoreBrokenPipe(std::io::stdout))
+        .init();
 
     if cli.debug {
         info!("Debug logging enabled");
@@ -373,11 +376,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match parse_result {
                             Ok(Ok((metadata, patch_opt))) => {
                                 // Check cutoff
-                                if let Some(cutoff) = cutoff_timestamp {
-                                    if metadata.date < cutoff {
-                                        // info!("Skipping fetched article {} (date {} < cutoff {})", article_id, metadata.date, cutoff);
-                                        return;
-                                    }
+                                if let Some(cutoff) = cutoff_timestamp
+                                    && metadata.date < cutoff
+                                {
+                                    // info!("Skipping fetched article {} (date {} < cutoff {})", article_id, metadata.date, cutoff);
+                                    return;
                                 }
 
                                 if let Err(e) = tx
