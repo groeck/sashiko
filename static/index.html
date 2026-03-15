@@ -34,6 +34,7 @@
             --thought-color: #6a737d;
             --thought-border: #d0d7de;
             --log-color: #000;
+            --th-bg: #fafafa;
             --status-pending: #0366d6;
             --status-inreview: #d67f05;
             --status-reviewed: #22863a;
@@ -76,6 +77,7 @@
                 --thought-color: #8b949e;
                 --thought-border: #30363d;
                 --log-color: #c9d1d9;
+                --th-bg: #161b22;
                 --status-pending: #58a6ff;
                 --status-inreview: #d29922;
                 --status-reviewed: #3fb950;
@@ -212,7 +214,7 @@
 
         th {
             font-weight: 600;
-            background: #fafafa;
+            background: var(--th-bg);
         }
 
         tr:hover {
@@ -1194,14 +1196,14 @@
                 if (status === 'Reviewed' || status === 'Finished') {
                     return '<span style="color:#2e7d32;">✓</span>';
                 }
-                return '<span style="color:#999">-</span>';
+                return '<span style="color:var(--text-dim)">-</span>';
             }
             return `
                 <div style="display:inline-flex; gap:6px; font-weight:bold; font-size:0.9em; vertical-align:middle;">
-                    <span style="color:${critical > 0 ? '#B71C1C' : '#999'}" title="Critical">${critical}</span>
-                    <span style="color:${high > 0 ? '#FF5722' : '#999'}" title="High">${high}</span>
-                    <span style="color:${medium > 0 ? '#FF9800' : '#999'}" title="Medium">${medium}</span>
-                    <span style="color:${low > 0 ? '#FBC02D' : '#999'}" title="Low">${low}</span>
+                    <span style="color:${critical > 0 ? '#B71C1C' : 'var(--text-dim)'}" title="Critical">${critical}</span>
+                    <span style="color:${high > 0 ? '#FF5722' : 'var(--text-dim)'}" title="High">${high}</span>
+                    <span style="color:${medium > 0 ? '#FF9800' : 'var(--text-dim)'}" title="Medium">${medium}</span>
+                    <span style="color:${low > 0 ? '#FBC02D' : 'var(--text-dim)'}" title="Low">${low}</span>
                 </div>
             `;
         }
@@ -1782,7 +1784,7 @@
                          contentHtml = `
                             <table style="width:100%; border-collapse:collapse; margin-top:8px;">
                                 <thead>
-                                    <tr style="background:#f6f8fa;">
+                                    <tr style="background:var(--code-bg);">
                                         <th style="text-align:left; padding:6px; border-bottom:1px solid #d0d7de;">Baseline</th>
                                         <th style="text-align:left; padding:6px; border-bottom:1px solid #d0d7de; width:100px;">Status</th>
                                         <th style="text-align:right; padding:6px; border-bottom:1px solid #d0d7de; width:120px;">Log</th>
@@ -1945,10 +1947,10 @@
                             displayResult = '<span style="color:#2e7d32;font-weight:bold;">No regressions</span>';
                         } else {
                             const parts = [];
-                            parts.push(`Critical: <span style="${counts.critical > 0 ? 'color:#B71C1C;font-weight:bold' : 'color:#999'}">${counts.critical}</span>`);
-                            parts.push(`High: <span style="${counts.high > 0 ? 'color:#FF5722;font-weight:bold' : 'color:#999'}">${counts.high}</span>`);
-                            parts.push(`Medium: <span style="${counts.medium > 0 ? 'color:#FF9800;font-weight:bold' : 'color:#999'}">${counts.medium}</span>`);
-                            parts.push(`Low: <span style="${counts.low > 0 ? 'color:#FBC02D;font-weight:bold' : 'color:#999'}">${counts.low}</span>`);
+                            parts.push(`Critical: <span style="${counts.critical > 0 ? 'color:#B71C1C;font-weight:bold' : 'color:var(--text-dim)'}">${counts.critical}</span>`);
+                            parts.push(`High: <span style="${counts.high > 0 ? 'color:#FF5722;font-weight:bold' : 'color:var(--text-dim)'}">${counts.high}</span>`);
+                            parts.push(`Medium: <span style="${counts.medium > 0 ? 'color:#FF9800;font-weight:bold' : 'color:var(--text-dim)'}">${counts.medium}</span>`);
+                            parts.push(`Low: <span style="${counts.low > 0 ? 'color:#FBC02D;font-weight:bold' : 'color:var(--text-dim)'}">${counts.low}</span>`);
                             displayResult = parts.join(' · ');
                         }
                         parsedFindings = true;
