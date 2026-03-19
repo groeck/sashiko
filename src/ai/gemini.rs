@@ -231,7 +231,7 @@ impl GeminiClient {
         let res = match self.client.post(url).json(body).send().await {
             Ok(res) => res,
             Err(e) => {
-                let err_str = redact_secret(&e.to_string());
+                let err_str = redact_secret(&format!("{:#}", anyhow::Error::from(e)));
                 tracing::error!("Gemini request failed (transport): {}", err_str);
                 return Err(GeminiError::TransientError(Duration::from_secs(30), err_str).into());
             }

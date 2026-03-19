@@ -59,7 +59,7 @@ pub async fn handle_generate(
                 error!("Gemini Proxy Error: {}", e);
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": e.to_string()})),
+                    Json(serde_json::json!({"error": format!("{:#}", e)})),
                 )
                     .into_response();
             }
