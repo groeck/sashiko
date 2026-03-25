@@ -578,57 +578,96 @@ Example:
             let user_prompt = format!("{}\n\n{}", stage_prompt, format_guidance);
             let clean_user_prompt = format!("{}\n\n{}", clean_stage_prompt, format_guidance);
 
-            let mut attempts = 0;
-            let max_attempts = 3;
+            let mut outer_attempts = 0;
+            let max_outer_attempts = 3;
             let mut success = false;
 
-            while attempts < max_attempts && !success {
-                attempts += 1;
-                match self
-                    .run_ai_stage(
-                        stage,
-                        system_prompt.clone(),
-                        clean_system_prompt.clone(),
-                        user_prompt.clone(),
-                        clean_user_prompt.clone(),
-                    )
-                    .await
-                {
-                    Ok((result_json, t_in, t_out, t_cached)) => {
-                        total_tokens_in += t_in;
-                        total_tokens_out += t_out;
-                        total_tokens_cached += t_cached;
+            while outer_attempts < max_outer_attempts && !success {
+                outer_attempts += 1;
 
-                        if let Some(concerns) =
-                            result_json.get("concerns").and_then(|c| c.as_array())
-                        {
-                            for c in concerns {
-                                if c.is_object() {
-                                    all_concerns.push(c.clone());
-                                } else if let Some(s) = c.as_str() {
-                                    all_concerns.push(serde_json::json!({
-                                        "type": "General",
-                                        "description": s
-                                    }));
+                let mut inner_attempts = 0;
+                let max_inner_attempts = 3;
+                let mut active_user_prompt = user_prompt.clone();
+                let mut active_clean_user_prompt = clean_user_prompt.clone();
+
+                while inner_attempts < max_inner_attempts && !success {
+                    inner_attempts += 1;
+                    match self
+                        .run_ai_stage(
+                            stage,
+                            system_prompt.clone(),
+                            clean_system_prompt.clone(),
+                            active_user_prompt.clone(),
+                            active_clean_user_prompt.clone(),
+                        )
+                        .await
+                    {
+                        Ok((result_json, t_in, t_out, t_cached)) => {
+                            total_tokens_in += t_in;
+                            total_tokens_out += t_out;
+                            total_tokens_cached += t_cached;
+
+                            if let Some(concerns) =
+                                result_json.get("concerns").and_then(|c| c.as_array())
+                            {
+                                for c in concerns {
+                                    if c.is_object() {
+                                        all_concerns.push(c.clone());
+                                    } else if let Some(s) = c.as_str() {
+                                        all_concerns.push(serde_json::json!({
+                                            "type": "General",
+                                            "description": s
+                                        }));
+                                    }
                                 }
+                                success = true;
+                            } else {
+                                let violation =
+                                    "JSON output is missing the required 'concerns' array";
+                                tracing::warn!(
+                                    "Stage {} format validation failed (inner attempt {}/{}): {}. Retrying with augmented prompt.",
+                                    stage,
+                                    inner_attempts,
+                                    max_inner_attempts,
+                                    violation
+                                );
+                                let reminder = format!(
+                                    "\n\nPrevious attempt was rejected: {violation}. You MUST return ONLY a JSON object containing a 'concerns' array. If there are no concerns, return `{{\"concerns\": []}}`."
+                                );
+                                active_user_prompt = format!("{}{}", user_prompt, reminder);
+                                active_clean_user_prompt =
+                                    format!("{}{}", clean_user_prompt, reminder);
                             }
                         }
-                        success = true;
+                        Err(e) => {
+                            warn!(
+                                "Stage {} AI execution failed (inner attempt {}/{}): {}",
+                                stage, inner_attempts, max_inner_attempts, e
+                            );
+                            // If the underlying AI execution fails (e.g. timeout, API error),
+                            // we probably shouldn't just keep retrying the augmented prompt,
+                            // but we let the inner loop exhaust to keep it simple, or we can break.
+                            // We will let it exhaust the inner loop.
+                        }
                     }
-                    Err(e) => {
-                        warn!(
-                            "Stage {} failed (attempt {}/{}): {}",
-                            stage, attempts, max_attempts, e
-                        );
-                    }
+                }
+
+                if !success {
+                    warn!(
+                        "Stage {} outer attempt {}/{} failed to produce valid output.",
+                        stage, outer_attempts, max_outer_attempts
+                    );
                 }
             }
             if !success {
-                warn!("Stage {} failed after {} attempts.", stage, max_attempts);
+                warn!(
+                    "Stage {} failed after {} outer attempts.",
+                    stage, max_outer_attempts
+                );
                 return Err(anyhow::anyhow!(
-                    "Stage {} failed after {} attempts — aborting review",
+                    "Stage {} failed to produce valid 'concerns' array after {} attempts — aborting review",
                     stage,
-                    max_attempts
+                    max_outer_attempts
                 ));
             }
         }
@@ -1266,7 +1305,7 @@ mod tests {
         match worker.run(patchset).await {
             Ok(_) => panic!("Expected stage failure error, got Ok"),
             Err(e) => assert!(
-                e.to_string().contains("failed after"),
+                e.to_string().contains("failed to produce valid"),
                 "unexpected error: {e}"
             ),
         }
