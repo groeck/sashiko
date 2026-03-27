@@ -430,11 +430,11 @@ impl Worker {
                         subsystem_md, target_commit_diff
                     );
                     let schema = json!({
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
                             "selected_prompts": {
-                                "type": "array",
-                                "items": { "type": "string" }
+                                "type": "ARRAY",
+                                "items": { "type": "STRING" }
                             }
                         },
                         "required": ["selected_prompts"]

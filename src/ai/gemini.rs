@@ -838,7 +838,7 @@ mod tests {
     #[test]
     fn test_translate_ai_request_json_format() -> Result<()> {
         let schema = json!({
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
                 "score": {"type": "number"}
             }
@@ -968,7 +968,7 @@ mod tests {
             tools: Some(vec![AiTool {
                 name: "my_function".to_string(),
                 description: "Does something".to_string(),
-                parameters: json!({"type": "object"}),
+                parameters: json!({"type": "OBJECT"}),
             }]),
             temperature: None,
             response_format: None,
