@@ -1615,6 +1615,16 @@ impl Database {
                         .await?;
                 }
 
+                self.conn.execute(
+                    "UPDATE patchsets SET status = 'Incomplete' WHERE id = ? AND status = 'Fetching'",
+                    libsql::params![id],
+                ).await?;
+
+                self.conn.execute(
+                    "UPDATE patchsets SET status = 'Pending' WHERE id = ? AND received_parts >= total_parts AND status IN ('Incomplete', 'Fetching')",
+                    libsql::params![id],
+                ).await?;
+
                 return Ok(Some(id));
             }
         }
@@ -1887,6 +1897,16 @@ impl Database {
                 libsql::params![target_id, target_id],
             )
             .await?;
+
+            self.conn.execute(
+                "UPDATE patchsets SET status = 'Incomplete' WHERE id = ? AND status = 'Fetching'",
+                libsql::params![target_id],
+            ).await?;
+
+            self.conn.execute(
+                "UPDATE patchsets SET status = 'Pending' WHERE id = ? AND received_parts >= total_parts AND status IN ('Incomplete', 'Fetching')",
+                libsql::params![target_id],
+            ).await?;
 
             return Ok(Some(target_id));
         }
@@ -2657,7 +2677,11 @@ impl Database {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
 
-        let root_msg_id = format!("{}@sashiko.local", article_id);
+        let root_msg_id = if article_id.contains('@') {
+            article_id.to_string()
+        } else {
+            format!("{}@sashiko.local", article_id)
+        };
 
         let clid_candidates = vec![article_id.to_string(), root_msg_id.clone()];
 
@@ -2713,7 +2737,11 @@ impl Database {
         }
     }
     pub async fn update_patchset_error(&self, article_id: &str, error: &str) -> Result<()> {
-        let root_msg_id = format!("{}@sashiko.local", article_id);
+        let root_msg_id = if article_id.contains('@') {
+            article_id.to_string()
+        } else {
+            format!("{}@sashiko.local", article_id)
+        };
         self.conn
             .execute(
                 "UPDATE patchsets SET status = 'Failed', failed_reason = ? WHERE cover_letter_message_id = ?",

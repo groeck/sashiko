@@ -134,9 +134,8 @@ pub fn parse_email(raw_email: &[u8]) -> Result<(PatchsetMetadata, Option<Patch>)
 
     // It is a patch or cover letter if:
     // 1. It is NOT a reply (Re: ...)
-    // 2. AND It has [PATCH]/[RFC] tag (strict requirement)
-    // 3. AND (It contains a diff OR it looks like a series cover letter/part)
-    let is_patch_or_cover = !is_reply && has_patch_tag && (has_diff || is_series_metadata);
+    // 2. AND (It has [PATCH]/[RFC] tag OR it has a diff OR it looks like a series cover letter/part)
+    let is_patch_or_cover = !is_reply && (has_patch_tag || has_diff || is_series_metadata);
 
     let metadata = PatchsetMetadata {
         message_id: message_id.clone(),

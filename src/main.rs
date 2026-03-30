@@ -741,7 +741,7 @@ async fn process_parsed_article(worker_db: &Database, article: ParsedArticle) ->
                 }
             }
             Ok(None) => {
-                if group != "git-fetch" {
+                if group != "git-fetch" && group != "manual" {
                     warn!("Mailing list not found for group: {}", group);
                 }
             }
