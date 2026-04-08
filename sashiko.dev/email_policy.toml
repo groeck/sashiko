@@ -24,3 +24,9 @@ cc = ["linux-hwmon@vger.kernel.org"]
 lists = ["linux-perf-users@vger.kernel.org"]
 reply_to_author = true
 cc = ["linux-perf-users@vger.kernel.org"]
+
+[subsystems.bpf]
+lists = ["bpf@vger.kernel.org"]
+reply_to_author = true
+cc = ["bpf@vger.kernel.org"]
+
