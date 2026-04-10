@@ -34,3 +34,8 @@ cc = ["bpf@vger.kernel.org"]
 lists = ["damon@lists.linux.dev"]
 reply_to_author = true
 cc = ["damon@lists.linux.dev"]
+
+[subsystems.ext4]
+lists = ["linux-ext4@vger.kernel.org"]
+reply_to_author = true
+cc = ["tytso@mit.edu"]
