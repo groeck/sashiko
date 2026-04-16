@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS patchsets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_patchsets_status ON patchsets(status);
-CREATE INDEX IF NOT EXISTS idx_patchsets_status_embargo_until ON patchsets(status, embargo_until);
+
 
 CREATE TABLE IF NOT EXISTS patches (
     id INTEGER PRIMARY KEY,
