@@ -121,7 +121,8 @@ pub async fn prefetch_context(worktree_path: &Path, diff: &str) -> Result<String
 
     let search_path = worktree_path.to_path_buf();
     // Map of symbol -> list of (path, line_num) candidate hits.
-    let candidates: Arc<Mutex<HashMap<String, Vec<(PathBuf, u64)>>>> =
+    type CandidatesMap = HashMap<String, Vec<(PathBuf, u64)>>;
+    let candidates: Arc<Mutex<CandidatesMap>> =
         Arc::new(Mutex::new(HashMap::new()));
     let candidates_clone = Arc::clone(&candidates);
 
@@ -197,8 +198,7 @@ pub async fn prefetch_context(worktree_path: &Path, diff: &str) -> Result<String
             );
 
             if current_chars + def_str.len() > MAX_PREFETCH_CHARS {
-                context_blocks
-                    .push("\n... (Definitions prefetch limits reached)\n".to_string());
+                context_blocks.push("\n... (Definitions prefetch limits reached)\n".to_string());
                 break;
             }
             current_chars += def_str.len();
@@ -276,7 +276,11 @@ fn score_definition_node(node: Node<'_>, sym: &str, source: &[u8]) -> i32 {
             if has_body { 90 } else { 0 }
         }
         "preproc_def" | "preproc_function_def" => {
-            if names_symbol("name") { 70 } else { 0 }
+            if names_symbol("name") {
+                70
+            } else {
+                0
+            }
         }
         "type_definition" => {
             // typedef struct foo { ... } sym; — score if the typedef name matches.
@@ -310,9 +314,7 @@ fn function_name(node: Node<'_>, source: &[u8]) -> Option<String> {
 fn typedef_names_match(node: Node<'_>, sym: &str, source: &[u8]) -> bool {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "type_identifier"
-            && child.utf8_text(source).ok() == Some(sym)
-        {
+        if child.kind() == "type_identifier" && child.utf8_text(source).ok() == Some(sym) {
             return true;
         }
     }
@@ -321,10 +323,7 @@ fn typedef_names_match(node: Node<'_>, sym: &str, source: &[u8]) -> bool {
 
 /// Pick the highest-scoring definition across all ripgrep candidates for `sym`.
 /// Returns (path, rendered block text).
-async fn best_definition_block(
-    sym: &str,
-    hits: &[(PathBuf, u64)],
-) -> Option<(PathBuf, String)> {
+async fn best_definition_block(sym: &str, hits: &[(PathBuf, u64)]) -> Option<(PathBuf, String)> {
     // Deduplicate paths — many hits may live in the same file.
     let mut seen = HashSet::new();
     let mut best: Option<(i32, PathBuf, String)> = None;

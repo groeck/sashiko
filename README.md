@@ -61,7 +61,7 @@ Running an automated review system like Sashiko can be computationally expensive
 
 ## Prerequisites
 
-- **Rust**: Version 1.86 or later.
+- **Rust**: Version 1.90 or later.
 - **Git**: For managing the repository and kernel tree.
 - **LLM Provider API Key**: Access to an LLM provider (e.g., Google's Gemini or Anthropic's Claude).
 

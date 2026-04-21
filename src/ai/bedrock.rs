@@ -267,9 +267,7 @@ fn translate_request(
     }
     flush_tool_results(&mut pending_tool_results, &mut messages)?;
 
-    if enable_caching
-        && let Some(last) = messages.last_mut()
-    {
+    if enable_caching && let Some(last) = messages.last_mut() {
         let role = last.role().clone();
         let mut builder = Message::builder().role(role);
         for block in last.content().iter().cloned() {
@@ -320,6 +318,7 @@ fn translate_request(
 
     let inference_config = {
         let mut builder = InferenceConfiguration::builder().max_tokens(max_tokens as i32);
+        #[allow(clippy::collapsible_if)]
         if thinking.is_none() {
             if let Some(temp) = request.temperature {
                 builder = builder.temperature(temp);

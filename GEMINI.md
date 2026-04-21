@@ -34,7 +34,7 @@ Use `just` to run common development tasks:
 
 ## 1. Idiomatic Rust
 
-- **Version:** Make sure the code can be compiled with Rust 1.86, don't use unstable new features.
+- **Version:** Make sure the code can be compiled with Rust 1.90, don't use unstable new features.
 - **Safety First:** Prioritize safe Rust. Only use `unsafe` blocks when absolutely necessary and document the safety invariant clearly.
 - **Error Handling:** Use `Result<T, E>` for recoverable errors. Avoid `.unwrap()` and `.expect()` in production code unless you can statically prove it will never panic (and document why). Prefer `?` operator for error propagation.
 - **Ownership & Borrowing:** Leverage the borrow checker. Prefer borrowing (`&T`, `&mut T`) over cloning (`.clone()`) unless necessary for ownership transfer.
