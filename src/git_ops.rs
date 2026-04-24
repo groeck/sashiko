@@ -1082,4 +1082,83 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_ensure_remote_bad_tag_recovery() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let local_repo_path = temp_dir.path().join("local");
+        let remote_repo_path = temp_dir.path().join("remote");
+
+        std::fs::create_dir(&local_repo_path)?;
+        std::fs::create_dir(&remote_repo_path)?;
+
+        // Init remote repo
+        Command::new("git")
+            .current_dir(&remote_repo_path)
+            .args(["init"])
+            .output()
+            .await?;
+
+        Command::new("git")
+            .current_dir(&remote_repo_path)
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .await?;
+        Command::new("git")
+            .current_dir(&remote_repo_path)
+            .args(["config", "user.name", "Test"])
+            .output()
+            .await?;
+        let mut file = File::create(remote_repo_path.join("file.txt"))?;
+        writeln!(file, "test")?;
+        Command::new("git")
+            .current_dir(&remote_repo_path)
+            .args(["add", "file.txt"])
+            .output()
+            .await?;
+        Command::new("git")
+            .current_dir(&remote_repo_path)
+            .args(["commit", "-m", "init"])
+            .output()
+            .await?;
+
+        // Init local repo
+        Command::new("git")
+            .current_dir(&local_repo_path)
+            .args(["init"])
+            .output()
+            .await?;
+
+        // Use ensure_remote to add remote and fetch
+        ensure_remote(
+            &local_repo_path,
+            "origin",
+            remote_repo_path.to_str().unwrap(),
+            true,
+        )
+        .await?;
+
+        // Create bad tag in local repo
+        let tags_dir = local_repo_path.join(".git").join("refs").join("tags");
+        std::fs::create_dir_all(&tags_dir)?;
+        let bad_tag_path = tags_dir.join("bad-tag");
+        let mut bad_tag_file = File::create(&bad_tag_path)?;
+        writeln!(bad_tag_file, "0000000000000000000000000000000000000000")?;
+
+        // Fetch again, should auto-recover and delete the bad tag
+        ensure_remote(
+            &local_repo_path,
+            "origin",
+            remote_repo_path.to_str().unwrap(),
+            true,
+        )
+        .await?;
+
+        assert!(
+            !bad_tag_path.exists(),
+            "Bad tag should have been deleted by recovery logic"
+        );
+
+        Ok(())
+    }
 }
