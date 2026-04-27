@@ -3234,6 +3234,31 @@ impl Database {
         Ok(())
     }
 
+    pub async fn get_patchset_status(&self, id: i64) -> Result<Option<String>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT status FROM patchsets WHERE id = ?",
+                libsql::params![id],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn cancel_patchset(&self, id: i64, force: bool) -> Result<bool> {
+        let query = if force {
+            "UPDATE patchsets SET status = 'Cancelled' WHERE id = ? AND status IN ('Pending', 'Incomplete', 'In Review')"
+        } else {
+            "UPDATE patchsets SET status = 'Cancelled' WHERE id = ? AND status IN ('Pending', 'Incomplete')"
+        };
+        let count = self.conn.execute(query, libsql::params![id]).await?;
+        Ok(count > 0)
+    }
+
     pub async fn restart_failed_reviews(&self) -> Result<u64> {
         let count = self.conn.execute(
             "UPDATE patchsets SET status = 'Pending', failed_reason = NULL WHERE status IN ('Failed', 'Failed To Apply')",

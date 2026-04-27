@@ -653,16 +653,24 @@ impl Reviewer {
             // Cleanup worktree here since we kept it alive for reuse
             let _ = worktree.remove().await;
 
-            let final_status = if review_success {
-                ReviewStatus::Reviewed.as_str().to_string()
+            let current_status = ctx.db.get_patchset_status(patchset_id).await.ok().flatten();
+            if current_status.as_deref() == Some(ReviewStatus::Cancelled.as_str()) {
+                info!(
+                    "Patchset {} was cancelled during review, preserving status",
+                    patchset_id
+                );
             } else {
-                ReviewStatus::Failed.as_str().to_string()
-            };
+                let final_status = if review_success {
+                    ReviewStatus::Reviewed.as_str().to_string()
+                } else {
+                    ReviewStatus::Failed.as_str().to_string()
+                };
 
-            let _ = ctx
-                .db
-                .update_patchset_status(patchset_id, &final_status)
-                .await;
+                let _ = ctx
+                    .db
+                    .update_patchset_status(patchset_id, &final_status)
+                    .await;
+            }
         } else {
             // No baseline found
             warn!("No working baseline found for patchset {}", patchset_id);

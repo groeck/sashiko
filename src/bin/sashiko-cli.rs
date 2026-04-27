@@ -97,6 +97,15 @@ enum Commands {
         #[arg(default_value = "latest")]
         id: String,
     },
+    /// Cancel a pending review
+    Cancel {
+        /// ID of the patchset to cancel
+        id: i64,
+
+        /// Force cancel even if the review is already in progress
+        #[arg(long, short)]
+        force: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -188,6 +197,7 @@ async fn run_command(
             per_page,
         } => handle_list(client, base_url, page, per_page, filter, format).await,
         Commands::Show { id } => handle_show(client, base_url, id, format).await,
+        Commands::Cancel { id, force } => handle_cancel(client, base_url, id, force, format).await,
     }
 }
 
@@ -395,6 +405,7 @@ async fn handle_list(
                         "Embargoed" => Color::Magenta,
                         "Failed" | "Error" | "Failed To Apply" => Color::Red,
                         "Pending" | "In Review" => Color::Yellow,
+                        "Cancelled" => Color::Red,
                         _ => Color::White,
                     };
 
@@ -681,6 +692,45 @@ async fn handle_show(
             "Failed to show patchset: {}",
             resp.status()
         ));
+    }
+
+    Ok(())
+}
+
+async fn handle_cancel(
+    client: &Client,
+    base_url: &str,
+    id: i64,
+    force: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let url = format!("{}/api/patchset/cancel?id={}&force={}", base_url, id, force);
+    let resp = client.post(&url).send().await?;
+
+    if resp.status().is_success() {
+        let result: serde_json::Value = resp.json().await?;
+        match format {
+            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
+            OutputFormat::Text => {
+                let status = result["status"].as_str().unwrap_or("");
+                if status == "cancelled" {
+                    print_colored(Color::Green, "Cancelled: ");
+                    println!("Patchset {} has been cancelled.", id);
+                } else {
+                    print_colored(Color::Yellow, "Not modified: ");
+                    println!(
+                        "{}",
+                        result["reason"]
+                            .as_str()
+                            .unwrap_or("Patchset could not be cancelled.")
+                    );
+                }
+            }
+        }
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Cancel failed ({}): {}", status, text));
     }
 
     Ok(())
