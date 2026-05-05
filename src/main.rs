@@ -858,7 +858,7 @@ async fn process_parsed_article(
             )
         };
 
-        let max_embargo_hours = calculate_embargo_hours(&subsystems, policy);
+        let max_embargo_hours = calculate_embargo_hours(&subject, &subsystems, policy);
 
         let embargo_until = if max_embargo_hours > 0 {
             let now = std::time::SystemTime::now()
@@ -1012,25 +1012,94 @@ async fn process_recipients(
     }
 }
 
+fn extract_subject_prefixes(subject: &str) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    let mut in_bracket = false;
+    let mut current_block = String::new();
+
+    for c in subject.chars() {
+        if c == '[' {
+            in_bracket = true;
+            current_block.clear();
+        } else if c == ']' {
+            if in_bracket {
+                let parts = current_block.split_whitespace();
+                for part in parts {
+                    let part_lower = part.to_lowercase();
+                    if part_lower == "patch" || part_lower == "rfc" {
+                        continue;
+                    }
+                    if part_lower.starts_with('v')
+                        && part_lower[1..].chars().all(|c| c.is_ascii_digit())
+                    {
+                        continue;
+                    }
+                    if part_lower.contains('/')
+                        && part_lower.chars().all(|c| c.is_ascii_digit() || c == '/')
+                    {
+                        continue;
+                    }
+                    if !part_lower.is_empty() {
+                        prefixes.push(part_lower.to_string());
+                    }
+                }
+            }
+            in_bracket = false;
+        } else if in_bracket {
+            current_block.push(c);
+        }
+    }
+    prefixes
+}
+
 // Helper function to map To/Cc to Subsystems
 fn calculate_embargo_hours(
+    subject: &str,
     subsystems: &[(String, String)],
     policy: &sashiko::email_policy::EmailPolicyConfig,
 ) -> u32 {
-    let mut explicit_delays = Vec::new();
+    let subject_prefixes = extract_subject_prefixes(subject);
+    let mut matched_subsystem_policies = Vec::new();
+
     for (_, email) in subsystems {
         for sp in policy.subsystems.values() {
             #[allow(clippy::collapsible_if)]
             if sp.lists.iter().any(|list| email.contains(list)) {
-                if let Some(delay) = sp.embargo_hours {
-                    explicit_delays.push(delay);
+                matched_subsystem_policies.push(sp);
+            }
+        }
+    }
+
+    let mut explicit_delays = Vec::new();
+    let mut prefix_matched_delays = Vec::new();
+
+    for sp in &matched_subsystem_policies {
+        if let Some(delay) = sp.embargo_hours {
+            explicit_delays.push(delay);
+
+            if !sp.subject_prefixes.is_empty() {
+                for prefix in &subject_prefixes {
+                    if sp
+                        .subject_prefixes
+                        .iter()
+                        .any(|p| p.eq_ignore_ascii_case(prefix))
+                    {
+                        prefix_matched_delays.push(delay);
+                        break;
+                    }
                 }
             }
         }
     }
 
-    if !explicit_delays.is_empty() {
-        *explicit_delays.iter().min().unwrap()
+    let delays_to_consider = if !prefix_matched_delays.is_empty() {
+        prefix_matched_delays
+    } else {
+        explicit_delays
+    };
+
+    if !delays_to_consider.is_empty() {
+        *delays_to_consider.iter().min().unwrap()
     } else {
         policy.defaults.embargo_hours.unwrap_or(0)
     }
@@ -1173,15 +1242,17 @@ mod tests {
             "net".to_string(),
             SubsystemPolicy {
                 lists: vec!["netdev@vger.kernel.org".to_string()],
-                embargo_hours: Some(2),
+                embargo_hours: Some(24),
+                subject_prefixes: vec!["net".to_string(), "net-next".to_string()],
                 ..Default::default()
             },
         );
         subsystems_policy.insert(
-            "usb".to_string(),
+            "bpf".to_string(),
             SubsystemPolicy {
-                lists: vec!["linux-usb@vger.kernel.org".to_string()],
-                embargo_hours: Some(5),
+                lists: vec!["bpf@vger.kernel.org".to_string()],
+                embargo_hours: Some(0),
+                subject_prefixes: vec!["bpf".to_string(), "bpf-next".to_string()],
                 ..Default::default()
             },
         );
@@ -1199,17 +1270,46 @@ mod tests {
             "LKML".to_string(),
             "linux-kernel@vger.kernel.org".to_string(),
         )];
-        assert_eq!(calculate_embargo_hours(&subs, &policy), 1);
+        assert_eq!(
+            calculate_embargo_hours("[PATCH some-tree 1/2] foo", &subs, &policy),
+            1
+        );
 
         // Case 2: Single match
         let subs = vec![("netdev".to_string(), "netdev@vger.kernel.org".to_string())];
-        assert_eq!(calculate_embargo_hours(&subs, &policy), 2);
+        assert_eq!(
+            calculate_embargo_hours("[PATCH net-next v3 1/2] foo", &subs, &policy),
+            24
+        );
 
-        // Case 3: Multiple matches -> takes minimum
+        // Case 3: Multiple matches without subject prefix match -> takes minimum
         let subs = vec![
             ("netdev".to_string(), "netdev@vger.kernel.org".to_string()),
-            ("usb".to_string(), "linux-usb@vger.kernel.org".to_string()),
+            ("bpf".to_string(), "bpf@vger.kernel.org".to_string()),
         ];
-        assert_eq!(calculate_embargo_hours(&subs, &policy), 2);
+        assert_eq!(
+            calculate_embargo_hours("[PATCH 1/2] foo", &subs, &policy),
+            0
+        );
+
+        // Case 4: Multiple matches with subject prefix match for net -> uses net
+        let subs = vec![
+            ("netdev".to_string(), "netdev@vger.kernel.org".to_string()),
+            ("bpf".to_string(), "bpf@vger.kernel.org".to_string()),
+        ];
+        assert_eq!(
+            calculate_embargo_hours("[PATCH net-next v3 1/2] foo", &subs, &policy),
+            24
+        );
+
+        // Case 5: Multiple matches with subject prefix match for bpf -> uses bpf
+        let subs = vec![
+            ("netdev".to_string(), "netdev@vger.kernel.org".to_string()),
+            ("bpf".to_string(), "bpf@vger.kernel.org".to_string()),
+        ];
+        assert_eq!(
+            calculate_embargo_hours("[RFC PATCH bpf-next] foo", &subs, &policy),
+            0
+        );
     }
 }

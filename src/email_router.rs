@@ -206,6 +206,7 @@ mod tests {
                 ignored_emails: vec![],
                 patchwork: Default::default(),
                 embargo_hours: None,
+                ..Default::default()
             },
         );
         subsystems.insert(
@@ -220,6 +221,7 @@ mod tests {
                 ignored_emails: vec![],
                 patchwork: Default::default(),
                 embargo_hours: None,
+                ..Default::default()
             },
         );
         subsystems.insert(
@@ -234,6 +236,7 @@ mod tests {
                 ignored_emails: vec![],
                 patchwork: Default::default(),
                 embargo_hours: None,
+                ..Default::default()
             },
         );
         EmailPolicyConfig {
@@ -247,6 +250,7 @@ mod tests {
                 ignored_emails: vec![],
                 patchwork: Default::default(),
                 embargo_hours: None,
+                ..Default::default()
             },
             subsystems,
         }
