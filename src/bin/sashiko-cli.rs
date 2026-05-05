@@ -609,10 +609,15 @@ async fn handle_show(
                             {
                                 for r in reviews {
                                     if r.get("patch_id").and_then(|id| id.as_i64()) == Some(p_id) {
-                                        if let Some(inline) = r.get("inline_review").and_then(|s| s.as_str())
-                                            && !inline.is_empty() {
-                                                patch_review = Some(r);
-                                                break;
+                                        let status = r.get("status").and_then(|s| s.as_str());
+                                        let current_status =
+                                            patch_review.and_then(|pr: &serde_json::Value| {
+                                                pr.get("status").and_then(|s| s.as_str())
+                                            });
+                                        if status == Some("Reviewed")
+                                            || current_status != Some("Reviewed")
+                                        {
+                                            patch_review = Some(r);
                                         }
                                     }
                                 }
