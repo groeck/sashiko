@@ -36,6 +36,6 @@ Sashiko provides flexible delivery mechanisms that can be configured per mailing
 *   **`mute_all`:** Completely mutes Sashiko for the given scope, preventing any review emails from being sent.
 *   **`cc`:** A static list of email addresses that should always receive a copy of the review.
 *   **`ignored_emails`:** A list of author email addresses whose submissions will never be reviewed by the system.
-*   **`embargo_hours`:** The number of hours to wait before sending out a review, providing a delay period.
+*   **`embargo_hours`:** The number of hours to wait before sending out a review, providing a delay period. When a patch is sent to multiple mailing lists, the shortest explicitly configured embargo period among the matched subsystems will be used. If no matched subsystems explicitly configure this value, it falls back to the default policy.
 
 **Configuration:** The email policies and delivery preferences are defined in the [`sashiko.dev/email_policy.toml`](sashiko.dev/email_policy.toml) file. To request a change to your configuration, please open a GitHub Issue or email the development mailing list (`sashiko@lists.linux.dev`).

@@ -1017,18 +1017,23 @@ fn calculate_embargo_hours(
     subsystems: &[(String, String)],
     policy: &sashiko::email_policy::EmailPolicyConfig,
 ) -> u32 {
-    let mut max_embargo_hours = policy.defaults.embargo_hours.unwrap_or(0);
+    let mut explicit_delays = Vec::new();
     for (_, email) in subsystems {
         for sp in policy.subsystems.values() {
             #[allow(clippy::collapsible_if)]
             if sp.lists.iter().any(|list| email.contains(list)) {
                 if let Some(delay) = sp.embargo_hours {
-                    max_embargo_hours = max_embargo_hours.max(delay);
+                    explicit_delays.push(delay);
                 }
             }
         }
     }
-    max_embargo_hours
+
+    if !explicit_delays.is_empty() {
+        *explicit_delays.iter().min().unwrap()
+    } else {
+        policy.defaults.embargo_hours.unwrap_or(0)
+    }
 }
 
 fn identify_subsystems(to: &str, cc: &str) -> Vec<(String, String)> {
@@ -1200,11 +1205,11 @@ mod tests {
         let subs = vec![("netdev".to_string(), "netdev@vger.kernel.org".to_string())];
         assert_eq!(calculate_embargo_hours(&subs, &policy), 2);
 
-        // Case 3: Multiple matches -> takes maximum
+        // Case 3: Multiple matches -> takes minimum
         let subs = vec![
             ("netdev".to_string(), "netdev@vger.kernel.org".to_string()),
             ("usb".to_string(), "linux-usb@vger.kernel.org".to_string()),
         ];
-        assert_eq!(calculate_embargo_hours(&subs, &policy), 5);
+        assert_eq!(calculate_embargo_hours(&subs, &policy), 2);
     }
 }
