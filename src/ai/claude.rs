@@ -402,7 +402,11 @@ fn translate_ai_request(
             Some(system_blocks)
         },
         tools,
-        thinking: Some(ThinkingConfig { thinking, effort }),
+        thinking: if thinking.is_some() || effort.is_some() {
+            Some(ThinkingConfig { thinking, effort })
+        } else {
+            None
+        },
     };
 
     // Apply cache control if enabled
@@ -652,5 +656,410 @@ impl AiProvider for StdioClaudeClient {
             model_name: "stdio-claude".to_string(),
             context_window_size: 200_000,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{AiMessage, AiRequest, AiRole, AiTool, ToolCall};
+    use serde_json::json;
+
+    fn make_request(messages: Vec<AiMessage>) -> AiRequest {
+        AiRequest {
+            system: None,
+            messages,
+            tools: None,
+            temperature: None,
+            response_format: None,
+            context_tag: None,
+        }
+    }
+
+    // --- ThinkingConfig tests (Bug 1 regression) ---
+
+    #[test]
+    fn test_thinking_config_omitted_when_both_none() {
+        let req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("hi".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+
+        let claude_req = translate_ai_request(&req, false, 4096, None, None).unwrap();
+        assert!(claude_req.thinking.is_none());
+
+        let json = serde_json::to_value(&claude_req).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("thinking"));
+    }
+
+    #[test]
+    fn test_thinking_config_present_when_thinking_set() {
+        let req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("hi".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+
+        let claude_req =
+            translate_ai_request(&req, false, 4096, Some("enabled".to_string()), None).unwrap();
+        assert!(claude_req.thinking.is_some());
+        let tc = claude_req.thinking.unwrap();
+        assert_eq!(tc.thinking.as_deref(), Some("enabled"));
+        assert!(tc.effort.is_none());
+    }
+
+    #[test]
+    fn test_thinking_config_present_when_effort_set() {
+        let req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("hi".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+
+        let claude_req =
+            translate_ai_request(&req, false, 4096, None, Some("high".to_string())).unwrap();
+        assert!(claude_req.thinking.is_some());
+        let tc = claude_req.thinking.unwrap();
+        assert!(tc.thinking.is_none());
+        assert_eq!(tc.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn test_thinking_config_serialization_populated() {
+        let req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("hi".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+
+        let claude_req = translate_ai_request(
+            &req,
+            false,
+            4096,
+            Some("enabled".to_string()),
+            Some("high".to_string()),
+        )
+        .unwrap();
+        let json = serde_json::to_value(&claude_req).unwrap();
+        let thinking = &json["thinking"];
+        assert_eq!(thinking["type"], "enabled");
+        assert_eq!(thinking["effort"], "high");
+    }
+
+    // --- Request translation tests ---
+
+    #[test]
+    fn test_translate_system_and_user() -> Result<()> {
+        let mut req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("Hello!".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+        req.system = Some("You are helpful.".to_string());
+
+        let claude_req = translate_ai_request(&req, false, 4096, None, None)?;
+
+        let sys = claude_req.system.unwrap();
+        assert_eq!(sys.len(), 1);
+        assert_eq!(sys[0].text, "You are helpful.");
+
+        assert_eq!(claude_req.messages.len(), 1);
+        assert_eq!(claude_req.messages[0].role, "user");
+        assert_eq!(claude_req.messages[0].content.len(), 1);
+        if let ClaudeContent::Text { text, .. } = &claude_req.messages[0].content[0] {
+            assert_eq!(text, "Hello!");
+        } else {
+            panic!("Expected Text content");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_assistant_with_tool_calls() -> Result<()> {
+        let req = make_request(vec![AiMessage {
+            role: AiRole::Assistant,
+            content: Some("Let me check.".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".to_string(),
+                function_name: "git_log".to_string(),
+                arguments: json!({"n": 5}),
+                thought_signature: None,
+            }]),
+            tool_call_id: None,
+        }]);
+
+        let claude_req = translate_ai_request(&req, false, 4096, None, None)?;
+        let content = &claude_req.messages[0].content;
+        assert_eq!(content.len(), 2);
+
+        if let ClaudeContent::Text { text, .. } = &content[0] {
+            assert_eq!(text, "Let me check.");
+        } else {
+            panic!("Expected Text block");
+        }
+
+        if let ClaudeContent::ToolUse { id, name, input } = &content[1] {
+            assert_eq!(id, "call_1");
+            assert_eq!(name, "git_log");
+            assert_eq!(input, &json!({"n": 5}));
+        } else {
+            panic!("Expected ToolUse block");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_tool_result() -> Result<()> {
+        let req = make_request(vec![AiMessage {
+            role: AiRole::Tool,
+            content: Some("commit abc123".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: Some("call_1".to_string()),
+        }]);
+
+        let claude_req = translate_ai_request(&req, false, 4096, None, None)?;
+        assert_eq!(claude_req.messages.len(), 1);
+        assert_eq!(claude_req.messages[0].role, "user");
+
+        if let ClaudeContent::ToolResult {
+            tool_use_id,
+            content,
+            ..
+        } = &claude_req.messages[0].content[0]
+        {
+            assert_eq!(tool_use_id, "call_1");
+            assert_eq!(content, "commit abc123");
+        } else {
+            panic!("Expected ToolResult block");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_tools() -> Result<()> {
+        let mut req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("hi".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+        req.tools = Some(vec![AiTool {
+            name: "read_file".to_string(),
+            description: "Read a file".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}}
+            }),
+        }]);
+
+        let claude_req = translate_ai_request(&req, false, 4096, None, None)?;
+        let tools = claude_req.tools.unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "read_file");
+        assert_eq!(tools[0].description, "Read a file");
+
+        Ok(())
+    }
+
+    // --- Response translation tests ---
+
+    #[test]
+    fn test_translate_response_text() -> Result<()> {
+        let resp = ClaudeResponse {
+            id: "msg_1".to_string(),
+            content: vec![ClaudeContent::Text {
+                text: "Hello!".to_string(),
+                cache_control: None,
+            }],
+            stop_reason: Some("end_turn".to_string()),
+            usage: ClaudeUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
+        };
+
+        let ai_resp = translate_ai_response(&resp)?;
+        assert_eq!(ai_resp.content.as_deref(), Some("Hello!"));
+        assert!(ai_resp.thought.is_none());
+        assert!(ai_resp.tool_calls.is_none());
+
+        let usage = ai_resp.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_response_tool_calls() -> Result<()> {
+        let resp = ClaudeResponse {
+            id: "msg_2".to_string(),
+            content: vec![ClaudeContent::ToolUse {
+                id: "call_1".to_string(),
+                name: "git_log".to_string(),
+                input: json!({"n": 5}),
+            }],
+            stop_reason: Some("tool_use".to_string()),
+            usage: ClaudeUsage {
+                input_tokens: 20,
+                output_tokens: 10,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
+        };
+
+        let ai_resp = translate_ai_response(&resp)?;
+        assert!(ai_resp.content.is_none());
+        let calls = ai_resp.tool_calls.unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].function_name, "git_log");
+        assert_eq!(calls[0].arguments, json!({"n": 5}));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_response_thinking() -> Result<()> {
+        let resp = ClaudeResponse {
+            id: "msg_3".to_string(),
+            content: vec![
+                ClaudeContent::Thinking {
+                    thinking: "Let me think...".to_string(),
+                    signature: "sig_abc".to_string(),
+                    cache_control: None,
+                },
+                ClaudeContent::Text {
+                    text: "Here's my answer.".to_string(),
+                    cache_control: None,
+                },
+            ],
+            stop_reason: Some("end_turn".to_string()),
+            usage: ClaudeUsage {
+                input_tokens: 30,
+                output_tokens: 15,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
+        };
+
+        let ai_resp = translate_ai_response(&resp)?;
+        assert_eq!(ai_resp.content.as_deref(), Some("Here's my answer."));
+        assert_eq!(ai_resp.thought.as_deref(), Some("Let me think..."));
+        assert_eq!(ai_resp.thought_signature.as_deref(), Some("sig_abc"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_translate_response_usage_with_cache() -> Result<()> {
+        let resp = ClaudeResponse {
+            id: "msg_4".to_string(),
+            content: vec![ClaudeContent::Text {
+                text: "ok".to_string(),
+                cache_control: None,
+            }],
+            stop_reason: Some("end_turn".to_string()),
+            usage: ClaudeUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: Some(200),
+                cache_read_input_tokens: Some(500),
+            },
+        };
+
+        let ai_resp = translate_ai_response(&resp)?;
+        let usage = ai_resp.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 800); // 100 + 500 + 200
+        assert_eq!(usage.completion_tokens, 50);
+        assert_eq!(usage.total_tokens, 850);
+        assert_eq!(usage.cached_tokens, Some(500));
+
+        Ok(())
+    }
+
+    // --- Cache control tests ---
+
+    #[test]
+    fn test_cache_control_applied() -> Result<()> {
+        let mut req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("Hello!".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+        req.system = Some("System prompt.".to_string());
+
+        let claude_req = translate_ai_request(&req, true, 4096, None, None)?;
+
+        // Last system block should have cache_control
+        let sys = claude_req.system.unwrap();
+        assert!(sys.last().unwrap().cache_control.is_some());
+
+        // Last message content should have cache_control
+        let last_msg = claude_req.messages.last().unwrap();
+        if let ClaudeContent::Text { cache_control, .. } = last_msg.content.last().unwrap() {
+            assert!(cache_control.is_some());
+        } else {
+            panic!("Expected Text content with cache_control");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_control_not_applied_when_disabled() -> Result<()> {
+        let mut req = make_request(vec![AiMessage {
+            role: AiRole::User,
+            content: Some("Hello!".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+        req.system = Some("System prompt.".to_string());
+
+        let claude_req = translate_ai_request(&req, false, 4096, None, None)?;
+
+        let sys = claude_req.system.unwrap();
+        assert!(sys.last().unwrap().cache_control.is_none());
+
+        let last_msg = claude_req.messages.last().unwrap();
+        if let ClaudeContent::Text { cache_control, .. } = last_msg.content.last().unwrap() {
+            assert!(cache_control.is_none());
+        } else {
+            panic!("Expected Text content");
+        }
+
+        Ok(())
     }
 }
