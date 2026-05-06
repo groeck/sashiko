@@ -68,6 +68,22 @@ sashiko submit [INPUT] [OPTIONS]
   - Auto-detect if ID is not provided? (Maybe last submitted?).
   - Allow `HEAD` if we can resolve it to a patchset ID? (Complex).
   - Show "most recent" if no ID? `sashiko show latest`.
+  - Add `--watch` `-w` flag to stream status updates linearly.
+  - Parity between JSON and text outputs (show detailed findings in text format).
+
+### 5. `rerun`
+**Goal:** Request a re-review of a completed patchset.
+- `sashiko rerun <ID>`.
+- **Improvement:**
+  - Placed back into `Pending` queue.
+
+### 6. `local`
+**Goal:** Run a local review with optional interactive loop.
+- `sashiko local [INPUT] [OPTIONS]`.
+- **Improvement:**
+  - Add `--interactive` flag.
+  - If issues are found, pauses and prompts the user/agent to modify the code or provide a rebuttal.
+  - Loops until review is clean (LGTM).
 
 ## Action Plan
 1.  **Refine `submit` argument parsing:** Implement robust detection logic.
