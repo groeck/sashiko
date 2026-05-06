@@ -96,6 +96,15 @@ enum Commands {
         /// ID of the patchset or "latest"
         #[arg(default_value = "latest")]
         id: String,
+
+        /// Stream status updates linearly
+        #[arg(long, short = 'w')]
+        watch: bool,
+    },
+    /// Request a re-review of a completed patchset
+    Rerun {
+        /// ID of the patchset to re-review
+        id: i64,
     },
     /// Cancel a pending review
     Cancel {
@@ -131,6 +140,10 @@ enum Commands {
         /// Force local execution even if server is running
         #[arg(long)]
         force_local: bool,
+
+        /// Pause on failure, wait for agent/user to fix code, and re-run automatically
+        #[arg(long)]
+        interactive: bool,
     },
 }
 
@@ -222,7 +235,8 @@ async fn run_command(
             page,
             per_page,
         } => handle_list(client, base_url, page, per_page, filter, format).await,
-        Commands::Show { id } => handle_show(client, base_url, id, format).await,
+        Commands::Show { id, watch } => handle_show(client, base_url, id, watch, format).await,
+        Commands::Rerun { id } => handle_rerun(client, base_url, id, format).await,
         Commands::Cancel { id, force } => handle_cancel(client, base_url, id, force, format).await,
         Commands::Local {
             input,
@@ -231,6 +245,7 @@ async fn run_command(
             no_ai,
             custom_prompt,
             force_local,
+            interactive,
         } => {
             handle_local(
                 client,
@@ -241,6 +256,7 @@ async fn run_command(
                 no_ai,
                 custom_prompt,
                 force_local,
+                interactive,
                 format,
             )
             .await
@@ -497,6 +513,7 @@ async fn handle_show(
     client: &Client,
     base_url: &str,
     mut id: String,
+    watch: bool,
     format: OutputFormat,
 ) -> Result<()> {
     if id == "latest" {
@@ -518,203 +535,264 @@ async fn handle_show(
         }
     }
 
-    let url = format!("{}/api/patch?id={}", base_url, id);
-    let resp = client.get(&url).send().await?;
+    let mut last_status = String::new();
+    loop {
+        let url = format!("{}/api/patch?id={}", base_url, id);
+        let resp = client.get(&url).send().await?;
 
-    if resp.status().is_success() {
-        let mut details: Value = resp.json().await?;
-        let status = details["status"].as_str().unwrap_or("").to_string();
+        if resp.status().is_success() {
+            let mut details: Value = resp.json().await?;
+            let status = details["status"].as_str().unwrap_or("").to_string();
 
-        // Extract the actual numeric ID for subsequent calls
-        let numeric_id = details["id"].to_string();
+            let is_terminal = matches!(
+                status.as_str(),
+                "Reviewed" | "Failed" | "Error" | "Cancelled" | "Embargoed" | "Failed To Apply"
+            );
 
-        // Fetch review if available
-        let mut review_data = None;
-        if status == "Reviewed" || status == "Failed" || status == "Failed To Apply" {
-            let review_url = format!("{}/api/review_log?patchset_id={}", base_url, numeric_id);
-            let review_resp = client.get(&review_url).send().await?;
-
-            if review_resp.status().is_success() {
-                review_data = Some(review_resp.json::<Value>().await?);
-            }
-        }
-
-        match format {
-            OutputFormat::Json => {
-                if let Some(r) = review_data {
-                    details["review"] = r;
+            if watch && status != last_status {
+                if matches!(format, OutputFormat::Text) {
+                    println!(
+                        "[{}] Status: {}",
+                        chrono::Local::now().format("%H:%M:%S"),
+                        status
+                    );
                 }
-                println!("{}", serde_json::to_string_pretty(&details)?);
+                last_status = status.clone();
             }
-            OutputFormat::Text => {
-                print_colored(Color::Cyan, "Patchset Details:\n");
-                println!("  ID:        {}", details["id"]);
-                println!("  Subject:   {}", details["subject"].as_str().unwrap_or(""));
-                println!("  Author:    {}", details["author"].as_str().unwrap_or(""));
-                let status_str = details["status"].as_str().unwrap_or("");
-                if status_str == "Embargoed" {
-                    if let Some(until_ts) = details.get("embargo_until").and_then(|u| u.as_i64()) {
-                        println!(
-                            "  Status:    Embargoed until {}",
-                            format_timestamp(until_ts)
-                        );
+
+            if watch && !is_terminal {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+
+            // Extract the actual numeric ID for subsequent calls
+            let numeric_id = details["id"].to_string();
+
+            // Fetch review if available
+            let mut review_data = None;
+            if status == "Reviewed" || status == "Failed" || status == "Failed To Apply" {
+                let review_url = format!("{}/api/review_log?patchset_id={}", base_url, numeric_id);
+                let review_resp = client.get(&review_url).send().await?;
+
+                if review_resp.status().is_success() {
+                    review_data = Some(review_resp.json::<Value>().await?);
+                }
+            }
+
+            match format {
+                OutputFormat::Json => {
+                    if let Some(r) = review_data {
+                        details["review"] = r;
+                    }
+                    println!("{}", serde_json::to_string_pretty(&details)?);
+                }
+                OutputFormat::Text => {
+                    print_colored(Color::Cyan, "Patchset Details:\n");
+                    println!("  ID:        {}", details["id"]);
+                    println!("  Subject:   {}", details["subject"].as_str().unwrap_or(""));
+                    println!("  Author:    {}", details["author"].as_str().unwrap_or(""));
+                    let status_str = details["status"].as_str().unwrap_or("");
+                    if status_str == "Embargoed" {
+                        if let Some(until_ts) =
+                            details.get("embargo_until").and_then(|u| u.as_i64())
+                        {
+                            println!(
+                                "  Status:    Embargoed until {}",
+                                format_timestamp(until_ts)
+                            );
+                        } else {
+                            println!("  Status:    Embargoed");
+                        }
                     } else {
-                        println!("  Status:    Embargoed");
-                    }
-                } else {
-                    println!("  Status:    {}", status_str);
-                }
-
-                if let Some(ts) = details["date"].as_i64() {
-                    println!("  Date:      {}", format_timestamp(ts));
-                }
-
-                if let Some(reason) = details.get("failed_reason").and_then(|r| r.as_str()) {
-                    print_colored(Color::Red, "\nFailure Reason: ");
-                    println!("{}", reason);
-                }
-
-                if let Some(patches) = details.get("patches").and_then(|p| p.as_array()) {
-                    println!("\nPatches ({}):", patches.len());
-                    for patch in patches {
-                        let idx = patch["part_index"].as_i64().unwrap_or(0);
-                        let status = patch["status"].as_str().unwrap_or("");
-                        let apply_err = patch["apply_error"].as_str();
-                        let p_id = patch["id"].as_i64().unwrap_or(0);
-
-                        let mut patch_review_status = None;
-                        let mut has_issues = false;
-                        if let Some(reviews) = details.get("reviews").and_then(|r| r.as_array()) {
-                            for r in reviews {
-                                if r.get("patch_id").and_then(|id| id.as_i64()) == Some(p_id) {
-                                    patch_review_status = r.get("status").and_then(|s| s.as_str());
-                                    if let Some(inline) =
-                                        r.get("inline_review").and_then(|s| s.as_str())
-                                        && inline != "No issues found."
-                                        && !inline.is_empty()
-                                    {
-                                        has_issues = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        print!("  [{}] {}", idx, patch["subject"].as_str().unwrap_or(""));
-                        if !status.is_empty() && status != "Pending" {
-                            print!(" (");
-                            let color = match status {
-                                "Failed" | "Failed To Apply" | "Error" => Color::Red,
-                                "Embargoed" => Color::Magenta,
-                                _ => Color::Green,
-                            };
-                            print_colored(color, status);
-                            print!(")");
-                        }
-
-                        if let Some(rev_status) = patch_review_status {
-                            print!(" [");
-                            let color = if has_issues {
-                                Color::Yellow
-                            } else if rev_status == "Failed" {
-                                Color::Red
-                            } else {
-                                Color::Green
-                            };
-                            let label = if has_issues {
-                                "Issues Found"
-                            } else {
-                                rev_status
-                            };
-                            print_colored(color, label);
-                            print!("]");
-                        }
-                        println!();
-
-                        if let Some(err) = apply_err {
-                            print_colored(Color::Red, "      Error: ");
-                            println!("{}", err.trim());
-                        }
-                    }
-                }
-
-                if let Some(review) = review_data {
-                    println!("\nReview Summary:");
-                    if let Some(verdict) = review.get("verdict").and_then(|v| v.as_str()) {
-                        let color = match verdict {
-                            "LGTM" => Color::Green,
-                            "Request Changes" => Color::Red,
-                            _ => Color::Yellow,
-                        };
-                        print!("  Verdict: ");
-                        print_colored(color, verdict);
-                        println!();
+                        println!("  Status:    {}", status_str);
                     }
 
-                    if let Some(model) = review.get("model").and_then(|m| m.as_str()) {
-                        println!("  Model:   {}", model);
+                    if let Some(ts) = details["date"].as_i64() {
+                        println!("  Date:      {}", format_timestamp(ts));
                     }
 
-                    if let Some(summary) = review.get("summary").and_then(|s| s.as_str())
-                        && summary != "No summary available."
-                        && !summary.is_empty()
-                    {
-                        println!("\n{}", summary.trim());
+                    if let Some(reason) = details.get("failed_reason").and_then(|r| r.as_str()) {
+                        print_colored(Color::Red, "\nFailure Reason: ");
+                        println!("{}", reason);
                     }
 
                     if let Some(patches) = details.get("patches").and_then(|p| p.as_array()) {
-                        println!();
+                        println!("\nPatches ({}):", patches.len());
                         for patch in patches {
                             let idx = patch["part_index"].as_i64().unwrap_or(0);
-                            let subject = patch["subject"].as_str().unwrap_or("");
+                            let status = patch["status"].as_str().unwrap_or("");
+                            let apply_err = patch["apply_error"].as_str();
                             let p_id = patch["id"].as_i64().unwrap_or(0);
 
-                            let mut patch_review = None;
+                            let mut patch_review_status = None;
+                            let mut has_issues = false;
                             if let Some(reviews) = details.get("reviews").and_then(|r| r.as_array())
                             {
                                 for r in reviews {
                                     if r.get("patch_id").and_then(|id| id.as_i64()) == Some(p_id) {
-                                        let status = r.get("status").and_then(|s| s.as_str());
-                                        let current_status =
-                                            patch_review.and_then(|pr: &serde_json::Value| {
-                                                pr.get("status").and_then(|s| s.as_str())
-                                            });
-                                        if status == Some("Reviewed")
-                                            || current_status != Some("Reviewed")
+                                        patch_review_status =
+                                            r.get("status").and_then(|s| s.as_str());
+                                        if let Some(inline) =
+                                            r.get("inline_review").and_then(|s| s.as_str())
+                                            && inline != "No issues found."
+                                            && !inline.is_empty()
                                         {
-                                            patch_review = Some(r);
+                                            has_issues = true;
                                         }
                                     }
                                 }
                             }
 
-                            if let Some(r) = patch_review
-                                && let Some(output_str) = r.get("output").and_then(|o| o.as_str())
-                                && let Ok(output_json) = from_str::<Value>(output_str)
-                                && let Some(findings) =
-                                    output_json.get("findings").and_then(|f| f.as_array())
-                            {
-                                let inline = r.get("inline_review").and_then(|s| s.as_str());
-                                print_findings_summary(
-                                    &format!("Patch {}: {}", idx, subject),
-                                    findings,
-                                    inline,
-                                );
+                            print!("  [{}] {}", idx, patch["subject"].as_str().unwrap_or(""));
+                            if !status.is_empty() && status != "Pending" {
+                                print!(" (");
+                                let color = match status {
+                                    "Failed" | "Failed To Apply" | "Error" => Color::Red,
+                                    "Embargoed" => Color::Magenta,
+                                    _ => Color::Green,
+                                };
+                                print_colored(color, status);
+                                print!(")");
+                            }
+
+                            if let Some(rev_status) = patch_review_status {
+                                print!(" [");
+                                let color = if has_issues {
+                                    Color::Yellow
+                                } else if rev_status == "Failed" {
+                                    Color::Red
+                                } else {
+                                    Color::Green
+                                };
+                                let label = if has_issues {
+                                    "Issues Found"
+                                } else {
+                                    rev_status
+                                };
+                                print_colored(color, label);
+                                print!("]");
+                            }
+                            println!();
+
+                            if let Some(err) = apply_err {
+                                print_colored(Color::Red, "      Error: ");
+                                println!("{}", err.trim());
                             }
                         }
                     }
-                } else if let Some(logs) = details.get("baseline_logs").and_then(|l| l.as_str()) {
-                    // Fallback to baseline logs if review is missing (e.g. Failed To Apply during baseline prep)
-                    if status == "Failed To Apply" {
-                        println!("\nBaseline Logs:\n{}", logs);
+
+                    if let Some(review) = review_data {
+                        println!("\nReview Summary:");
+                        if let Some(verdict) = review.get("verdict").and_then(|v| v.as_str()) {
+                            let color = match verdict {
+                                "LGTM" => Color::Green,
+                                "Request Changes" => Color::Red,
+                                _ => Color::Yellow,
+                            };
+                            print!("  Verdict: ");
+                            print_colored(color, verdict);
+                            println!();
+                        }
+
+                        if let Some(model) = review.get("model").and_then(|m| m.as_str()) {
+                            println!("  Model:   {}", model);
+                        }
+
+                        if let Some(summary) = review.get("summary").and_then(|s| s.as_str())
+                            && summary != "No summary available."
+                            && !summary.is_empty()
+                        {
+                            println!("\n{}", summary.trim());
+                        }
+
+                        if let Some(patches) = details.get("patches").and_then(|p| p.as_array()) {
+                            println!();
+                            for patch in patches {
+                                let idx = patch["part_index"].as_i64().unwrap_or(0);
+                                let subject = patch["subject"].as_str().unwrap_or("");
+                                let p_id = patch["id"].as_i64().unwrap_or(0);
+
+                                let mut patch_review = None;
+                                if let Some(reviews) =
+                                    details.get("reviews").and_then(|r| r.as_array())
+                                {
+                                    for r in reviews {
+                                        if r.get("patch_id").and_then(|id| id.as_i64())
+                                            == Some(p_id)
+                                        {
+                                            let status = r.get("status").and_then(|s| s.as_str());
+                                            let current_status =
+                                                patch_review.and_then(|pr: &serde_json::Value| {
+                                                    pr.get("status").and_then(|s| s.as_str())
+                                                });
+                                            if status == Some("Reviewed")
+                                                || current_status != Some("Reviewed")
+                                            {
+                                                patch_review = Some(r);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Some(r) = patch_review
+                                    && let Some(output_str) =
+                                        r.get("output").and_then(|o| o.as_str())
+                                    && let Ok(output_json) = from_str::<Value>(output_str)
+                                    && let Some(findings) =
+                                        output_json.get("findings").and_then(|f| f.as_array())
+                                {
+                                    let inline = r.get("inline_review").and_then(|s| s.as_str());
+                                    print_findings_summary(
+                                        &format!("Patch {}: {}", idx, subject),
+                                        findings,
+                                        inline,
+                                    );
+                                }
+                            }
+                        }
+                    } else if let Some(logs) = details.get("baseline_logs").and_then(|l| l.as_str())
+                    {
+                        // Fallback to baseline logs if review is missing (e.g. Failed To Apply during baseline prep)
+                        if status == "Failed To Apply" {
+                            println!("\nBaseline Logs:\n{}", logs);
+                        }
                     }
                 }
             }
+            break;
+        } else {
+            return Err(anyhow::anyhow!(
+                "Failed to show patchset: {}",
+                resp.status()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_rerun(
+    client: &Client,
+    base_url: &str,
+    id: i64,
+    format: OutputFormat,
+) -> Result<()> {
+    let url = format!("{}/api/patchset/rerun?id={}", base_url, id);
+    let resp = client.post(&url).send().await?;
+
+    if resp.status().is_success() {
+        let result: serde_json::Value = resp.json().await?;
+        match format {
+            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
+            OutputFormat::Text => {
+                print_colored(Color::Green, "Rerun queued: ");
+                println!("Patchset {} has been re-added to the review queue.", id);
+            }
         }
     } else {
-        return Err(anyhow::anyhow!(
-            "Failed to show patchset: {}",
-            resp.status()
-        ));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Rerun failed ({}): {}", status, text));
     }
 
     Ok(())
@@ -769,6 +847,7 @@ async fn handle_local(
     no_ai: bool,
     custom_prompt: Option<String>,
     force_local: bool,
+    interactive: bool,
     format: OutputFormat,
 ) -> Result<()> {
     // Determine repository path
@@ -835,170 +914,203 @@ async fn handle_local(
         }
     }
     // Cold start path: run review locally via sashiko-review subprocess
-    eprint_phase(1, 4, &format!("Extracting patches from {}...", input));
+    let mut dynamic_prompt = custom_prompt;
+    loop {
+        eprint_phase(1, 4, &format!("Extracting patches from {}...", input));
 
-    // Resolve commits
-    let shas = if input.contains("..") {
-        sashiko::git_ops::resolve_git_range(&repo_path, &input).await?
-    } else {
-        // Single ref — resolve to SHA
-        let sha = sashiko::git_ops::get_commit_hash(&repo_path, &input).await?;
-        vec![sha]
-    };
+        // Resolve commits
+        let shas = if input.contains("..") {
+            sashiko::git_ops::resolve_git_range(&repo_path, &input).await?
+        } else {
+            // Single ref — resolve to SHA
+            let sha = sashiko::git_ops::get_commit_hash(&repo_path, &input).await?;
+            vec![sha]
+        };
 
-    eprintln!(
-        " ({} commit{})",
-        shas.len(),
-        if shas.len() == 1 { "" } else { "s" }
-    );
+        eprintln!(
+            " ({} commit{})",
+            shas.len(),
+            if shas.len() == 1 { "" } else { "s" }
+        );
 
-    // Extract patch metadata and build ReviewInput
-    let mut patches = Vec::new();
-    for (i, sha) in shas.iter().enumerate() {
-        let meta = sashiko::git_ops::extract_patch_metadata(&repo_path, sha)
-            .await
-            .with_context(|| format!("Failed to extract metadata for commit {}", sha))?;
-        patches.push(sashiko::worker::PatchInput {
-            index: (i + 1) as i64,
-            diff: meta.diff,
-            subject: Some(meta.subject),
-            author: Some(meta.author),
-            date: Some(meta.timestamp),
-            message_id: None,
-            commit_id: Some(sha.clone()),
-        });
-    }
+        // Extract patch metadata and build ReviewInput
+        let mut patches = Vec::new();
+        for (i, sha) in shas.iter().enumerate() {
+            let meta = sashiko::git_ops::extract_patch_metadata(&repo_path, sha)
+                .await
+                .with_context(|| format!("Failed to extract metadata for commit {}", sha))?;
+            patches.push(sashiko::worker::PatchInput {
+                index: (i + 1) as i64,
+                diff: meta.diff,
+                subject: Some(meta.subject),
+                author: Some(meta.author),
+                date: Some(meta.timestamp),
+                message_id: None,
+                commit_id: Some(sha.clone()),
+            });
+        }
 
-    let review_input = sashiko::worker::ReviewInput {
-        id: 0, // Local review, no DB ID
-        subject: patches
-            .first()
-            .and_then(|p| p.subject.clone())
-            .unwrap_or_else(|| input.clone()),
-        patches,
-    };
+        let review_input = sashiko::worker::ReviewInput {
+            id: 0, // Local review, no DB ID
+            subject: patches
+                .first()
+                .and_then(|p| p.subject.clone())
+                .unwrap_or_else(|| input.clone()),
+            patches,
+        };
 
-    let review_json =
-        serde_json::to_string(&review_input).context("Failed to serialize review input")?;
+        let review_json =
+            serde_json::to_string(&review_input).context("Failed to serialize review input")?;
 
-    // Locate sashiko-review binary
-    let review_bin = find_review_binary()?;
+        // Locate sashiko-review binary
+        let review_bin = find_review_binary()?;
 
-    // Build subprocess args
-    let baseline_ref = if let Some(b) = &baseline {
-        b.clone()
-    } else {
-        // Default: parent of first commit
-        let first_sha = &shas[0];
-        format!("{}^", first_sha)
-    };
+        // Build subprocess args
+        let baseline_ref = if let Some(b) = &baseline {
+            b.clone()
+        } else {
+            // Default: parent of first commit
+            let first_sha = &shas[0];
+            format!("{}^", first_sha)
+        };
 
-    let mut args = vec!["--baseline".to_string(), baseline_ref];
+        let mut args = vec!["--baseline".to_string(), baseline_ref];
 
-    if no_ai {
-        args.push("--no-ai".to_string());
-    }
-    if let Some(prompt) = &custom_prompt {
-        args.push("--custom-prompt".to_string());
-        args.push(prompt.clone());
-    }
+        if no_ai {
+            args.push("--no-ai".to_string());
+        }
+        if let Some(prompt) = &dynamic_prompt {
+            args.push("--custom-prompt".to_string());
+            args.push(prompt.clone());
+        }
 
-    eprint_phase(2, 4, "Starting review subprocess...");
-    eprintln!();
+        eprint_phase(2, 4, "Starting review subprocess...");
+        eprintln!();
 
-    // Spawn review subprocess
-    let mut child = tokio::process::Command::new(&review_bin)
-        .args(&args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .env("SASHIKO_LOG_PLAIN", "1")
-        .spawn()
-        .with_context(|| format!("Failed to start review binary: {:?}", review_bin))?;
+        // Spawn review subprocess
+        let mut child = tokio::process::Command::new(&review_bin)
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .env("SASHIKO_LOG_PLAIN", "1")
+            .spawn()
+            .with_context(|| format!("Failed to start review binary: {:?}", review_bin))?;
 
-    // Write input to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        stdin
-            .write_all(format!("{}\n", review_json).as_bytes())
-            .await
-            .context("Failed to write to review subprocess stdin")?;
-        drop(stdin);
-    }
+        // Write input to stdin
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin
+                .write_all(format!("{}\n", review_json).as_bytes())
+                .await
+                .context("Failed to write to review subprocess stdin")?;
+            drop(stdin);
+        }
 
-    // Stream stderr for progress in a background task
-    let stderr = child.stderr.take();
-    let stderr_handle = tokio::spawn(async move {
-        if let Some(stderr) = stderr {
-            use tokio::io::{AsyncBufReadExt, BufReader};
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
-            let mut saw_applying = false;
-            let mut saw_ai_review = false;
-            while let Ok(Some(line)) = lines.next_line().await {
-                if !saw_applying && line.contains("Applying") {
-                    saw_applying = true;
-                    eprint_phase(2, 4, "Applying patches to worktree...");
-                    eprintln!();
-                }
-                if !saw_ai_review && line.contains("Starting AI review") {
-                    saw_ai_review = true;
-                    eprint_phase(3, 4, "AI review in progress...");
-                    eprintln!();
-                }
-                if line.contains("AI review completed") {
-                    eprint_phase(4, 4, "Review complete.");
-                    eprintln!();
+        // Stream stderr for progress in a background task
+        let stderr = child.stderr.take();
+        let stderr_handle = tokio::spawn(async move {
+            if let Some(stderr) = stderr {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+                let mut saw_applying = false;
+                let mut saw_ai_review = false;
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if !saw_applying && line.contains("Applying") {
+                        saw_applying = true;
+                        eprint_phase(2, 4, "Applying patches to worktree...");
+                        eprintln!();
+                    }
+                    if !saw_ai_review && line.contains("Starting AI review") {
+                        saw_ai_review = true;
+                        eprint_phase(3, 4, "AI review in progress...");
+                        eprintln!();
+                    }
+                    if line.contains("AI review completed") {
+                        eprint_phase(4, 4, "Review complete.");
+                        eprintln!();
+                    }
                 }
             }
+        });
+
+        // Capture stdout
+        let output = child
+            .wait_with_output()
+            .await
+            .context("Failed to wait for review subprocess")?;
+
+        let _ = stderr_handle.await;
+
+        let exit_code = output.status.code().unwrap_or(1);
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+        if stdout.trim().is_empty() {
+            return Err(anyhow::anyhow!(
+                "Review subprocess produced no output (exit code: {})",
+                exit_code
+            ));
         }
-    });
 
-    // Capture stdout
-    let output = child
-        .wait_with_output()
-        .await
-        .context("Failed to wait for review subprocess")?;
+        // Parse the review output
+        let result: Value =
+            serde_json::from_str(stdout.trim()).context("Failed to parse review output JSON")?;
 
-    let _ = stderr_handle.await;
-
-    let exit_code = output.status.code().unwrap_or(1);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-
-    if stdout.trim().is_empty() {
-        return Err(anyhow::anyhow!(
-            "Review subprocess produced no output (exit code: {})",
-            exit_code
-        ));
-    }
-
-    // Parse the review output
-    let result: Value =
-        serde_json::from_str(stdout.trim()).context("Failed to parse review output JSON")?;
-
-    match format {
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result)?);
+        match format {
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            OutputFormat::Text => {
+                print_local_review_results(&result, &input);
+            }
         }
-        OutputFormat::Text => {
-            print_local_review_results(&result, &input);
-        }
-    }
 
-    // Determine exit code based on findings
-    if let Some(err) = result.get("error").and_then(|e| e.as_str())
-        && !err.is_empty()
-    {
-        std::process::exit(3);
-    }
-    if let Some(review) = result.get("review")
-        && let Some(findings) = review.get("findings").and_then(|f| f.as_array())
-    {
-        let (c, h, _, _) = count_severities(findings);
-        if c > 0 || h > 0 {
-            std::process::exit(1);
+        // Determine exit code based on findings
+        let mut has_error = false;
+        if let Some(err) = result.get("error").and_then(|e| e.as_str())
+            && !err.is_empty()
+        {
+            has_error = true;
         }
-    }
+        let mut has_issues = false;
+        if let Some(review) = result.get("review")
+            && let Some(findings) = review.get("findings").and_then(|f| f.as_array())
+        {
+            let (c, h, m, l) = count_severities(findings);
+            if c > 0 || h > 0 || m > 0 || l > 0 {
+                has_issues = true;
+            }
+        }
+
+        if interactive && (has_error || has_issues) {
+            println!(
+                "\nIssues found. Please modify the code, or type a rebuttal here, then press Enter to re-run the review... (or Ctrl+C to exit)"
+            );
+            let mut rebuttal = String::new();
+            std::io::stdin().read_line(&mut rebuttal)?;
+            if !rebuttal.trim().is_empty() {
+                dynamic_prompt = Some(rebuttal.trim().to_string());
+            } else {
+                dynamic_prompt = None;
+            }
+            continue;
+        }
+
+        if has_error {
+            std::process::exit(3);
+        }
+        if let Some(review) = result.get("review")
+            && let Some(findings) = review.get("findings").and_then(|f| f.as_array())
+        {
+            let (c, h, _, _) = count_severities(findings);
+            if c > 0 || h > 0 {
+                std::process::exit(1);
+            }
+        }
+
+        break;
+    } // End of loop
 
     Ok(())
 }
@@ -1131,6 +1243,44 @@ fn print_findings_summary(label: &str, findings: &[Value], inline_review: Option
         "Critical: {} · High: {} · Medium: {} · Low: {}\n",
         c, h, m, l
     );
+
+    for f in findings {
+        let sev = f
+            .get("severity")
+            .and_then(|s| s.as_str())
+            .unwrap_or("Unknown");
+        let file = f.get("file").and_then(|s| s.as_str()).unwrap_or("");
+        let line = f.get("line").and_then(|l| l.as_i64()).unwrap_or(0);
+        let desc = f
+            .get("problem_description")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        let fix = f
+            .get("recommended_fix")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+
+        let color = match sev.to_lowercase().as_str() {
+            "critical" | "high" => Color::Red,
+            "medium" => Color::Yellow,
+            "low" => Color::Cyan,
+            _ => Color::White,
+        };
+
+        let location = if !file.is_empty() {
+            format!("{}:{}: ", file, line)
+        } else {
+            "".to_string()
+        };
+
+        print_colored(color, &format!("  {}[{}] ", location, sev));
+        println!("{}", desc);
+        if !fix.is_empty() {
+            println!("    Fix: {}", fix);
+        }
+    }
+    println!();
+
     if let Some(inline) = inline_review
         && !inline.is_empty()
         && inline != "No issues found."
