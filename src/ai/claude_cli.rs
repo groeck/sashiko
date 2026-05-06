@@ -34,7 +34,8 @@ use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use crate::ai::{
-    AiProvider, AiRequest, AiResponse, AiRole, AiUsage, ProviderCapabilities, ToolCall,
+    AiProvider, AiRequest, AiResponse, AiResponseFormat, AiRole, AiUsage, ProviderCapabilities,
+    ToolCall,
 };
 
 pub struct ClaudeCliProvider {
@@ -93,10 +94,10 @@ impl AiProvider for ClaudeCliProvider {
             // Try to extract the actual error message from the JSON output.
             // The CLI emits a JSON object with is_error=true and the reason
             // in the "result" field even when it exits non-zero.
-            if let Ok(outer) = serde_json::from_str::<Value>(&raw) {
-                if let Some(msg) = outer["result"].as_str() {
-                    anyhow::bail!("claude CLI error: {}", msg);
-                }
+            if let Ok(outer) = serde_json::from_str::<Value>(&raw)
+                && let Some(msg) = outer["result"].as_str()
+            {
+                anyhow::bail!("claude CLI error: {}", msg);
             }
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
@@ -217,6 +218,23 @@ pub fn build_prompt(request: &AiRequest) -> String {
              For your final answer: {\"content\": \"YOUR RESPONSE\"}\n\
              Do not mix both. Output exactly one JSON object.\n",
         );
+    } else if matches!(request.response_format, Some(AiResponseFormat::Json { .. })) {
+        // No tools but JSON format required (e.g. Phase 0, Planning).
+        if let Some(AiResponseFormat::Json {
+            schema: Some(schema),
+        }) = &request.response_format
+        {
+            out.push_str(&format!(
+                "RESPONSE FORMAT: You MUST respond with valid JSON only matching this schema: {}. \
+                 Do not include any explanation, markdown, or code fences — output raw JSON.\n",
+                serde_json::to_string(schema).unwrap_or_default()
+            ));
+        } else {
+            out.push_str(
+                "RESPONSE FORMAT: You MUST respond with valid JSON only. \
+                 Do not include any explanation, markdown, or code fences — output raw JSON.\n",
+            );
+        }
     }
 
     out
@@ -370,4 +388,91 @@ fn extract_json(text: &str) -> String {
         }
     }
     normalized.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{AiMessage, AiRequest, AiResponseFormat, AiRole, AiTool};
+    use serde_json::json;
+
+    fn make_request(messages: Vec<AiMessage>) -> AiRequest {
+        AiRequest {
+            system: None,
+            messages,
+            tools: None,
+            temperature: None,
+            response_format: None,
+            context_tag: None,
+        }
+    }
+
+    fn simple_user_msg() -> Vec<AiMessage> {
+        vec![AiMessage {
+            role: AiRole::User,
+            content: Some("hi".to_string()),
+            thought: None,
+            thought_signature: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]
+    }
+
+    #[test]
+    fn test_build_prompt_json_format_without_tools() {
+        let mut req = make_request(simple_user_msg());
+        req.response_format = Some(AiResponseFormat::Json { schema: None });
+
+        let prompt = build_prompt(&req);
+        assert!(prompt.contains("RESPONSE FORMAT"));
+        assert!(prompt.contains("valid JSON only"));
+        assert!(!prompt.contains("tool_calls"));
+    }
+
+    #[test]
+    fn test_build_prompt_json_format_with_schema() {
+        let mut req = make_request(simple_user_msg());
+        req.response_format = Some(AiResponseFormat::Json {
+            schema: Some(
+                json!({"type": "object", "properties": {"selected_prompts": {"type": "array"}}}),
+            ),
+        });
+
+        let prompt = build_prompt(&req);
+        assert!(prompt.contains("RESPONSE FORMAT"));
+        assert!(prompt.contains("selected_prompts"));
+        assert!(prompt.contains("matching this schema"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_tools_includes_format() {
+        let mut req = make_request(simple_user_msg());
+        req.tools = Some(vec![AiTool {
+            name: "git_log".to_string(),
+            description: "Show git log".to_string(),
+            parameters: json!({"type": "object"}),
+        }]);
+
+        let prompt = build_prompt(&req);
+        assert!(prompt.contains("RESPONSE FORMAT"));
+        assert!(prompt.contains("tool_calls"));
+        assert!(prompt.contains("<available_tools>"));
+    }
+
+    #[test]
+    fn test_build_prompt_text_format_no_instruction() {
+        let mut req = make_request(simple_user_msg());
+        req.response_format = Some(AiResponseFormat::Text);
+
+        let prompt = build_prompt(&req);
+        assert!(!prompt.contains("RESPONSE FORMAT"));
+    }
+
+    #[test]
+    fn test_build_prompt_no_format_no_instruction() {
+        let req = make_request(simple_user_msg());
+
+        let prompt = build_prompt(&req);
+        assert!(!prompt.contains("RESPONSE FORMAT"));
+    }
 }
