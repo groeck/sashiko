@@ -145,10 +145,15 @@ that the `google-cloud-auth` crate discovers automatically.
 
 ```bash
 export ANTHROPIC_VERTEX_PROJECT_ID="my-gcp-project"
-export CLOUD_ML_REGION="us-east5"  # or "global" for global endpoints
+export CLOUD_ML_REGION="us-east5"  # Regional endpoint (recommended)
 ```
 
 These can alternatively be set in `[ai.vertex]` in Settings.toml.
+
+**Note on endpoint selection**: Regional endpoints (e.g., `us-east5`) are
+recommended over `global`. The global endpoint may not be available for all
+projects or models and can return 404 even when the model is enabled.
+Regional endpoints have a 10% pricing premium but provide reliable routing.
 
 ### Settings.toml Configuration
 
@@ -180,6 +185,9 @@ cargo build --features vertex --release
 | 403 Forbidden | Model not enabled | Enable model in Vertex AI Model Garden console |
 | 403 Permission denied | Missing IAM role | Grant `roles/aiplatform.user` to your principal |
 | "Unsupported model family" | Model prefix not recognized | Check model name starts with `claude-` |
+| 404 Not Found on global endpoint | Global endpoint not available for project/model | Use a regional endpoint (e.g., `us-east5`) instead of `"global"`. Global endpoint availability depends on project configuration and model enablement. |
+| 404 with `@version` suffix in model name | Versioned model IDs not supported for all endpoints | Use the base model name without version suffix (e.g., `claude-sonnet-4-6` not `claude-sonnet-4-6@20250514`) |
+| "quota_exceeded" or "API not enabled" after ADC warning | ADC account lacks `serviceusage.services.use` on project | Run `gcloud auth application-default set-quota-project PROJECT_ID` or grant the permission |
 
 ## Developer Guide: Adding a New Model Family
 
@@ -271,3 +279,20 @@ Requires GCP credentials. Manual testing steps:
 2. Export `ANTHROPIC_VERTEX_PROJECT_ID` and `CLOUD_ML_REGION`
 3. Run `cargo run --features vertex` and submit a patch for review
 4. Verify response in logs (token counts, no errors)
+
+## Verified Behavior
+
+End-to-end integration test performed on 2026-05-07:
+
+- **Region**: `us-east5` (regional endpoint; `global` returned 404 for this project)
+- **Model**: `claude-sonnet-4-6` (no version suffix)
+- **Auth**: `google-cloud-auth` ADC via `gcloud auth application-default login`
+- **Result**: Full multi-stage review completed successfully
+
+Key observations:
+- Global endpoint (`global-aiplatform.googleapis.com`) returned 404; regional
+  endpoint (`us-east5-aiplatform.googleapis.com`) worked immediately
+- Model name with `@version` suffix (e.g., `claude-sonnet-4-6@20250514`) also
+  returned 404; bare model name worked
+- ADC quota project warning did not block API access
+- Prompt caching active and growing across successive calls within a review
