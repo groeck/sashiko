@@ -16,7 +16,7 @@ The official OpenAI API uses `max_completion_tokens` in the request body (introd
 | Stdio support | Not needed for OpenAI-compatible provider |
 | Thinking/reasoning support | Not included in initial implementation (`thought: None` always) |
 | Temperature | Always passed through from `AiRequest` when present |
-| URL configuration | `base_url` from settings → model-based default (glm-*, moonshot-*, abab7-*, others) |
+| URL configuration | `base_url` from settings → model-based default (glm-*, moonshot-*, abab7-*, MiniMax-*, others) |
 | API key | `OPENAI_API_KEY` env only (fallback to `LLM_API_KEY`), no provider-specific keys |
 
 ## Provider Compatibility
@@ -29,7 +29,7 @@ The official OpenAI API uses `max_completion_tokens` in the request body (introd
 | `gpt-3.5` | `https://api.openai.com/v1/chat/completions` | 16,385 |
 | `glm-` | `https://open.bigmodel.cn/api/paas/v4/chat/completions` | 128,000 |
 | `moonshot-` | `https://api.moonshot.cn/v1/chat/completions` | 128,000 |
-| `abab7-` | `https://api.minimax.chat/v1/text/chatcompletion_v2` | 245,760 |
+| `abab7-` / `MiniMax-` | `https://api.minimax.chat/v1/text/chatcompletion_v2` | 245,760 |
 
 All providers use `Authorization: Bearer <OPENAI_API_KEY>` for authentication.
 
@@ -355,7 +355,7 @@ base_url = "https://api.moonshot.cn/v1/chat/completions"
 # Minimax — uses max_tokens
 [ai]
 provider = "openai-compatible"
-model = "abab7-chat-preview"
+model = "abab7-chat-preview" # or "MiniMax-M2.7"
 
 [ai.openai_compat]
 base_url = "https://api.minimax.chat/v1/text/chatcompletion_v2"

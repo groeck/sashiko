@@ -172,7 +172,7 @@ impl OpenAiCompatClient {
             "https://open.bigmodel.cn/api/paas/v4/chat/completions".to_string()
         } else if model.starts_with("moonshot-") {
             "https://api.moonshot.cn/v1/chat/completions".to_string()
-        } else if model.starts_with("abab7-") {
+        } else if model.starts_with("abab7-") || model.starts_with("MiniMax-") {
             "https://api.minimax.chat/v1/text/chatcompletion_v2".to_string()
         } else {
             "https://api.openai.com/v1/chat/completions".to_string()
@@ -182,7 +182,7 @@ impl OpenAiCompatClient {
     pub fn default_context_window_for_model(model: &str) -> usize {
         if model.starts_with("glm-") || model.starts_with("moonshot-") {
             128_000
-        } else if model.starts_with("abab7-") {
+        } else if model.starts_with("abab7-") || model.starts_with("MiniMax-") {
             245_760
         } else if model.starts_with("gpt-4o") || model.starts_with("gpt-4-turbo") {
             128_000
