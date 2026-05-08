@@ -65,11 +65,19 @@ Running an automated review system like Sashiko can be computationally expensive
 - **Git**: For managing the repository and kernel tree.
 - **LLM Provider API Key**: Access to an LLM provider (e.g., Google's Gemini or Anthropic's Claude).
 
-## Setup
+## Installation
+
+### From crates.io
+
+```bash
+cargo install sashiko
+```
+
+### From source
 
 1.  **Clone the repository**:
     ```bash
-    git clone --recursive https://github.com/rgushchin/sashiko.git
+    git clone --recursive https://github.com/sashiko-dev/sashiko.git
     cd sashiko
     ```
     *Note: The `--recursive` flag is important to initialize the `linux` kernel source submodule.*
@@ -225,10 +233,10 @@ The daemon is responsible for monitoring mailing lists, managing the database, a
 To start the daemon:
 
 ```bash
-cargo run
+sashiko
 ```
 
-(Or via Nix: `nix run github:sashiko-dev/sashiko`)
+(Or from source: `cargo run`, or via Nix: `nix run github:sashiko-dev/sashiko`)
 
 ### 2. CLI
 
@@ -237,11 +245,11 @@ The CLI allows you to interact with the running Sashiko daemon from your termina
 To run the CLI:
 
 ```bash
-cargo run --bin sashiko-cli -- [COMMAND]
+sashiko-cli [COMMAND]
 ```
 
-(Or via Nix: Install `github:sashiko-dev/sashiko`, e.g. via `nix profile add`,
-then run `sashiko-cli [COMMAND]`)
+(Or from source: `cargo run --bin sashiko-cli -- [COMMAND]`,
+or via Nix: `nix profile add github:sashiko-dev/sashiko`)
 
 **Commands:**
 
