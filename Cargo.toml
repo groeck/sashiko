@@ -3,6 +3,27 @@ name = "sashiko"
 version = "0.1.5"
 edition = "2024"
 default-run = "sashiko"
+description = "Agentic code review system for Linux kernel"
+license = "Apache-2.0"
+repository = "https://github.com/sashiko-dev/sashiko"
+homepage = "https://sashiko.dev"
+readme = "README.md"
+keywords = ["linux", "kernel", "code-review", "ai", "llm"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    "third_party/linux/",
+    "llama.cpp/",
+    "archives/",
+    "review_trees/",
+    "sashiko.dev/",
+    "designs/",
+    ".sashiko*",
+    "*.log",
+    "*.txt",
+    "*.pid",
+    "install.sh",
+    "test_*.rs",
+]
 
 [features]
 default = ["bedrock"]
