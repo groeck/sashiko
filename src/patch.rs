@@ -24,6 +24,7 @@ pub struct PatchsetMetadata {
     pub subject: String,
     pub author: String,
     pub date: i64,
+    pub received_date: Option<i64>,
     pub in_reply_to: Option<String>,
     pub references: Vec<String>,
     pub index: u32,
@@ -44,7 +45,48 @@ pub struct Patch {
     pub part_index: u32,
 }
 
+pub fn extract_received_date(raw_email: &[u8]) -> Option<i64> {
+    let header_end = raw_email
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .unwrap_or(raw_email.len());
+    let headers_bytes = &raw_email[..header_end];
+    let headers_str = String::from_utf8_lossy(headers_bytes);
+
+    let mut current_header = String::new();
+    let mut in_received = false;
+
+    for line in headers_str.lines() {
+        if line.starts_with("Received:") {
+            if in_received {
+                break;
+            }
+            in_received = true;
+            current_header.push_str(line);
+        } else if in_received && (line.starts_with(' ') || line.starts_with('\t')) {
+            current_header.push_str(line);
+        } else if in_received {
+            break;
+        }
+    }
+
+    if current_header.is_empty() {
+        return None;
+    }
+
+    if let Some(semi_idx) = current_header.rfind(';') {
+        let date_str = current_header[semi_idx + 1..].trim();
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(date_str) {
+            return Some(dt.timestamp());
+        }
+    }
+
+    None
+}
+
 pub fn parse_email(raw_email: &[u8]) -> Result<(PatchsetMetadata, Option<Patch>)> {
+    let received_date = extract_received_date(raw_email);
+
     let message = MessageParser::default()
         .parse(raw_email)
         .ok_or_else(|| anyhow!("Failed to parse email"))?;
@@ -185,6 +227,7 @@ pub fn parse_email(raw_email: &[u8]) -> Result<(PatchsetMetadata, Option<Patch>)
         subject,
         author,
         date,
+        received_date,
         in_reply_to,
         references,
         index,
@@ -374,6 +417,29 @@ mod tests {
             "email@example.com"
         );
         assert_eq!(extract_email("Invalid < Format"), "Invalid < Format");
+    }
+
+    #[test]
+    fn test_extract_received_date() {
+        let email = b"Received: from mail.example.com ([192.0.2.1])\r\n \
+by mail.example.org with ESMTPS ;\r\n \
+Tue, 12 May 2026 00:12:30 +0000\r\n\
+\r\n\
+Body";
+        let expected = chrono::DateTime::parse_from_rfc2822("Tue, 12 May 2026 00:12:30 +0000")
+            .unwrap()
+            .timestamp();
+        assert_eq!(extract_received_date(email), Some(expected));
+
+        let email_no_received = b"Subject: Test\r\n\
+            \r\n\
+            Body";
+        assert_eq!(extract_received_date(email_no_received), None);
+
+        let email_malformed_date = b"Received: from ... ; Invalid Date\r\n\
+            \r\n\
+            Body";
+        assert_eq!(extract_received_date(email_malformed_date), None);
     }
 
     #[test]

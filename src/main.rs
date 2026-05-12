@@ -280,6 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             subject,
                             author,
                             date: timestamp,
+                            received_date: None,
                             in_reply_to,
                             references: vec![root_msg_id.clone()],
                             index,
@@ -861,11 +862,13 @@ async fn process_parsed_article(
         let max_embargo_hours = calculate_embargo_hours(&subject, &subsystems, policy);
 
         let embargo_until = if max_embargo_hours > 0 {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-            Some(now + (max_embargo_hours as i64) * 3600)
+            let base_time = metadata.received_date.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+            });
+            Some(base_time + (max_embargo_hours as i64) * 3600)
         } else {
             None
         };
