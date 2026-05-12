@@ -97,7 +97,7 @@ spec:
             - name: SASHIKO__SMTP__USERNAME
               value: "sashiko-bot@kernel.org"
             - name: SASHIKO__SMTP__REPLY_TO
-              value: "sashiko@lists.linux.dev"
+              value: "sashiko-reviews@lists.linux.dev"
             - name: SASHIKO__SMTP__DRY_RUN
               value: "false"
             - name: SASHIKO__REVIEW__EMAIL_POLICY_PATH

@@ -8,7 +8,7 @@ If you have questions, feedback, or need assistance, please reach out through th
 
 *   **GitHub Issues:** Use our issue tracker for bug reports, unexpected AI behavior, and feature requests.
 *   **GitHub Pull Requests:** For contributing code, adjusting tracking configurations, or improving prompt templates.
-*   **Mailing List:** Contact the Sashiko development mailing list at `sashiko@lists.linux.dev` for general discussions and inquiries.
+*   **Mailing List:** Contact the Sashiko development mailing list at `sashiko@lists.linux.dev` for general discussions and inquiries. Automated patch reviews and bot communications use `sashiko-reviews@lists.linux.dev`.
 
 ## Tracking a New Mailing List
 

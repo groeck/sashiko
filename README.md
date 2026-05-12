@@ -399,7 +399,7 @@ To evaluate the AI's review performance against a set of known issues, follow th
 We welcome contributions and feedback through two main channels:
 
 *   **GitHub:** Feel free to use GitHub issues for bug reports and feature requests, and submit Pull Requests for code changes.
-*   **Mailing List:** Join us at `sashiko@lists.linux.dev` (archived at [lore.kernel.org](https://lore.kernel.org/sashiko)) for Sashiko-related announcements and broader AI-review discussions, including general feedback, architectural ideas, and specific prompt discussions.
+*   **Mailing List:** Join us at `sashiko@lists.linux.dev` (archived at [lore.kernel.org](https://lore.kernel.org/sashiko)) for Sashiko-related announcements and broader AI-review discussions, including general feedback, architectural ideas, and specific prompt discussions. Automated patch reviews are sent from and should be replied to `sashiko-reviews@lists.linux.dev`.
 
 ## Contributing
 
