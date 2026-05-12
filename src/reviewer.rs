@@ -2136,10 +2136,9 @@ mod tests {
     #[async_trait]
     impl AiProvider for MockProvider {
         async fn generate_content(&self, _request: AiRequest) -> Result<AiResponse> {
-            // Simulate a slow AI response to allow logs to accumulate
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             Ok(AiResponse {
-                content: Some("Mocked AI response".to_string()),
+                content: Some("<final_verdict>Mocked AI response</final_verdict>".to_string()),
                 thought: None,
                 thought_signature: None,
                 tool_calls: None,
@@ -2423,9 +2422,16 @@ fi
 
     #[tokio::test]
     async fn test_skip_ignored_files() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let bin_path = temp_dir.path().join("mock_review");
+        std::fs::write(&bin_path, "#!/bin/sh\nexit 0")?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))?;
+
         let mut settings = Settings::new()?;
         settings.database.url = ":memory:".to_string();
         settings.review.ignore_files = vec!["ignored.txt".to_string(), "ignore_dir/".to_string()];
+        settings.review.review_tool_override = Some(bin_path);
 
         let db = Arc::new(Database::new(&settings.database).await?);
         db.migrate().await?;

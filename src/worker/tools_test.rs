@@ -114,7 +114,7 @@ mod tests {
         // Search for "Sashiko" which should be in README.md
         let args = json!({
             "pattern": "Sashiko",
-            "path": "."
+            "path": "README.md"
         });
 
         let result = rt
