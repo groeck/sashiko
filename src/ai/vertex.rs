@@ -212,15 +212,12 @@ impl VertexClient {
 
             Ok(response)
         } else {
-            let retry_after_duration = if status.as_u16() == 429 {
-                res.headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .map(Duration::from_secs)
-            } else {
-                None
-            };
+            let retry_after_duration = res
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(Duration::from_secs);
 
             let error_body = res
                 .text()
@@ -232,8 +229,8 @@ impl VertexClient {
                     let duration = retry_after_duration.unwrap_or(Duration::from_secs(60));
                     Err(ClaudeError::RateLimitExceeded(duration))?
                 }
-                529 => {
-                    let duration = Duration::from_secs(5);
+                500..=599 => {
+                    let duration = retry_after_duration.unwrap_or(Duration::from_secs(0));
                     Err(ClaudeError::OverloadedError(duration))?
                 }
                 400 => Err(ClaudeError::InvalidRequest(error_body))?,

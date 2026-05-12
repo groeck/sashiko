@@ -254,15 +254,12 @@ impl OpenAiCompatClient {
         let status = res.status();
         let status_code = status.as_u16();
 
-        let retry_after_duration = if status_code == 429 {
-            res.headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(Duration::from_secs)
-        } else {
-            None
-        };
+        let retry_after_duration = res
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_secs);
 
         let error_text = res.text().await.unwrap_or_default();
 
@@ -280,10 +277,10 @@ impl OpenAiCompatClient {
                 ))?
             }
             401 | 403 => Err(OpenAiCompatError::AuthenticationError(error_text))?,
-            500 | 502 | 503 | 504 => {
+            500..=599 => {
                 tracing::warn!("OpenAI Server Error {}: {}", status, error_text);
                 Err(OpenAiCompatError::TransientError(
-                    Duration::from_secs(30),
+                    retry_after_duration.unwrap_or(Duration::from_secs(0)),
                     error_text,
                 ))?
             }

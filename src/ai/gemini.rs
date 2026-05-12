@@ -352,15 +352,17 @@ impl GeminiClient {
             }
         }
 
-        if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            let retry_after_header = res
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|s| s.parse::<f64>().ok());
+        let status = res.status();
+        let retry_after_duration = res
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok());
 
-            let error_text = res.text().await?;
-            let retry_seconds = if let Some(secs) = retry_after_header {
+        let error_text = res.text().await?;
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_seconds = if let Some(secs) = retry_after_duration {
                 secs
             } else if let Some(caps) = re.captures(&error_text) {
                 caps[1].parse::<f64>().unwrap_or(30.0)
@@ -377,9 +379,6 @@ impl GeminiClient {
             );
         }
 
-        let status = res.status();
-        let error_text = res.text().await?;
-
         if status == reqwest::StatusCode::FORBIDDEN {
             let mut reason_str = String::new();
             if let Some(reason) = extract_gemini_error_reason(&error_text) {
@@ -395,12 +394,15 @@ impl GeminiClient {
 
         let is_transient = status.is_server_error() || status.as_u16() == 499;
         if is_transient {
+            let retry_duration = retry_after_duration
+                .map(Duration::from_secs_f64)
+                .unwrap_or(Duration::from_secs(0));
             tracing::warn!(
                 "Gemini API Transient Error: status={}, body={}",
                 status,
                 error_text
             );
-            return Err(GeminiError::TransientError(Duration::from_secs(30), error_text).into());
+            return Err(GeminiError::TransientError(retry_duration, error_text).into());
         }
 
         let mut reason_str = String::new();

@@ -260,16 +260,13 @@ impl ClaudeClient {
 
             Ok(response)
         } else {
-            // Parse retry-after header for 429 responses
-            let retry_after_duration = if status.as_u16() == 429 {
-                res.headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .map(Duration::from_secs)
-            } else {
-                None
-            };
+            // Parse retry-after header
+            let retry_after_duration = res
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(Duration::from_secs);
 
             let error_body = res
                 .text()
@@ -282,9 +279,9 @@ impl ClaudeClient {
                     let duration = retry_after_duration.unwrap_or(Duration::from_secs(60));
                     Err(ClaudeError::RateLimitExceeded(duration))?
                 }
-                529 => {
-                    // Overloaded - use exponential backoff
-                    let duration = Duration::from_secs(5); // Start with 5s
+                500..=599 => {
+                    // Overloaded / Server Error - use retry-after or exponential backoff
+                    let duration = retry_after_duration.unwrap_or(Duration::from_secs(0));
                     Err(ClaudeError::OverloadedError(duration))?
                 }
                 400 => Err(ClaudeError::InvalidRequest(error_body))?,
