@@ -423,7 +423,15 @@ pub async fn ensure_remote(
     url: &str,
     force_fetch: bool,
 ) -> Result<()> {
-    // 1. Security Check (Skipped - trusting MAINTAINERS)
+    // 1. Validate repo_path to prevent git from traversing up to parent repos
+    if !repo_path.join(".git").exists() && !repo_path.join("HEAD").exists() {
+        return Err(anyhow::anyhow!(
+            "{} is not a valid git repository. Did you forget to initialize submodules?",
+            repo_path.display()
+        ));
+    }
+
+    // 2. Security Check (Skipped - trusting MAINTAINERS)
     // acquire remote-specific lock
     let lock = get_remote_lock(name);
     let _guard = lock.lock().await;
