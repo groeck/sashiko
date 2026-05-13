@@ -333,11 +333,18 @@ The CLI allows you to interact with the running Sashiko daemon from your termina
 To run the CLI:
 
 ```bash
-sashiko-cli [COMMAND]
+sashiko-cli [OPTIONS] [COMMAND]
 ```
 
-(Or from source: `cargo run --bin sashiko-cli -- [COMMAND]`,
+(Or from source: `cargo run --bin sashiko-cli -- [OPTIONS] [COMMAND]`,
 or via Nix: `nix profile add github:sashiko-dev/sashiko`)
+
+**Global Options:**
+
+- **`--server <SERVER>`**: Override the server URL.
+- **`--format <FORMAT>`**: Switch between text and json output.
+- **`--color <COLOR>`**: Control color output (`auto`, `always`, `never`).
+- **`-V, --version`**: Print the tool version.
 
 **Commands:**
 
@@ -350,6 +357,10 @@ or via Nix: `nix profile add github:sashiko-dev/sashiko`)
   - `FILTER` can be a status (e.g., `pending`, `failed`, `reviewed`) or a search term.
 - **`show [ID]`**: Show detailed information about a patchset and its AI review.
   - `ID` defaults to `latest`.
+- **`rerun`**: Request a re-review of a completed patchset.
+- **`cancel`**: Cancel a pending review.
+- **`local`**: Run a local review.
+- **`help`**: Print help messages.
 
 ### 3. Getting Sashiko to Review Your Kernel Patch Series Locally
 
