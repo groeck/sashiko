@@ -70,6 +70,7 @@ impl AiProvider for ClaudeCliProvider {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn claude CLI: {}. Is it installed?", e))?;
 

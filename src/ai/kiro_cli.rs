@@ -289,6 +289,7 @@ impl KiroCliProvider {
             cmd.current_dir(tmp.path());
         }
 
+        cmd.kill_on_drop(true);
         let mut child = cmd.spawn().map_err(|e| {
             anyhow::anyhow!("Failed to spawn kiro-cli ACP: {}. Is it installed?", e)
         })?;

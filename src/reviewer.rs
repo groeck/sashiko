@@ -1559,6 +1559,7 @@ async fn run_review_tool(
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn()?;
 
@@ -2327,6 +2328,7 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
 
         let mut child = cmd.spawn()?;
         let mut stdin = child.stdin.take().unwrap();

@@ -62,6 +62,7 @@ impl AiProvider for CopilotCliProvider {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn copilot CLI: {}. Is it installed?", e))?;
 

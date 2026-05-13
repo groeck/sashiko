@@ -1548,6 +1548,7 @@ async fn handle_local(
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .env("SASHIKO_LOG_PLAIN", "1")
+            .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("Failed to start review binary: {:?}", review_bin))?;
 

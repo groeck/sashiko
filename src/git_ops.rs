@@ -131,6 +131,7 @@ impl GitWorktree {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
@@ -171,6 +172,7 @@ impl GitWorktree {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
@@ -517,7 +519,7 @@ pub async fn ensure_remote(
         info!("Fetching remote {}", name);
         let mut fetch = Command::new("git")
             .current_dir(repo_path)
-            .args(["fetch", "--prune", name])
+            .args(["fetch", "--prune", "--no-tags", name])
             .output()
             .await?;
 
@@ -544,7 +546,7 @@ pub async fn ensure_remote(
                     // Retry the fetch once
                     fetch = Command::new("git")
                         .current_dir(repo_path)
-                        .args(["fetch", "--prune", name])
+                        .args(["fetch", "--prune", "--no-tags", name])
                         .output()
                         .await?;
                 }
