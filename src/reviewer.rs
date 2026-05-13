@@ -1667,6 +1667,7 @@ async fn run_review_tool(
                                     }
                                     let ctx_tag = req.context_tag.clone().unwrap_or_default();
                                     let resp_payload = crate::ai::LOG_CONTEXT.scope(ctx_tag, async {
+                                    let mut local_transient_errors = 0;
                                     loop {
                                         let slept = quota_manager.wait_for_access().await;
                                         deadline += slept;
@@ -1691,9 +1692,15 @@ async fn run_review_tool(
                                                         continue;
                                                     }
                                                     AiErrorClass::Transient { retry_after } => {
-                                                        quota_manager
-                                                            .report_transient_error(retry_after)
-                                                            .await;
+                                                        local_transient_errors += 1;
+                                                        let backoff_secs = (1.0 * (2.0_f64.powi(local_transient_errors - 1))).min(60.0);
+                                                        let backoff = std::time::Duration::from_secs_f64(backoff_secs).max(retry_after);
+                                                        tracing::warn!(
+                                                            "AI provider transient error (streak: {}). Locally backing off for {:.2}s",
+                                                            local_transient_errors,
+                                                            backoff.as_secs_f64()
+                                                        );
+                                                        tokio::time::sleep(backoff).await;
                                                         continue;
                                                     }
                                                     AiErrorClass::Fatal => break Err(e),

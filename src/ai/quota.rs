@@ -22,8 +22,6 @@ pub struct QuotaManager {
     // Stores the time when we can resume making requests.
     // If None or in the past, we are free to go.
     blocked_until: Mutex<Option<Instant>>,
-    // Track consecutive transient errors for exponential backoff.
-    consecutive_transient_errors: Mutex<u32>,
 }
 
 impl Default for QuotaManager {
@@ -36,7 +34,6 @@ impl QuotaManager {
     pub fn new() -> Self {
         Self {
             blocked_until: Mutex::new(None),
-            consecutive_transient_errors: Mutex::new(0),
         }
     }
 
@@ -69,11 +66,10 @@ impl QuotaManager {
     }
 
     pub async fn report_success(&self) {
-        let mut count = self.consecutive_transient_errors.lock().await;
-        if *count > 0 {
-            *count = 0;
-            *self.blocked_until.lock().await = None;
-            info!("AI request succeeded, resetting transient error backoff.");
+        let mut guard = self.blocked_until.lock().await;
+        if guard.is_some() {
+            *guard = None;
+            info!("AI request succeeded, resetting quota backoff.");
         }
     }
 
@@ -93,34 +89,6 @@ impl QuotaManager {
         warn!(
             "Quota exhausted! Blocking all LLM requests for {:.2}s",
             retry_after.as_secs_f64()
-        );
-    }
-
-    pub async fn report_transient_error(&self, retry_after: Duration) {
-        let retry_after = retry_after.min(MAX_RETRY_AFTER);
-        let mut count_guard = self.consecutive_transient_errors.lock().await;
-        *count_guard += 1;
-        let count = *count_guard;
-
-        // Exponential backoff: 1s, 2s, 4s, 8s... capped at 60s
-        let backoff_secs = (1.0 * (2.0_f64.powi((count - 1) as i32))).min(60.0);
-        let backoff = Duration::from_secs_f64(backoff_secs).max(retry_after);
-
-        let mut block_guard = self.blocked_until.lock().await;
-        let resume_time = Instant::now() + backoff;
-
-        if let Some(current) = *block_guard {
-            if resume_time > current {
-                *block_guard = Some(resume_time);
-            }
-        } else {
-            *block_guard = Some(resume_time);
-        }
-
-        warn!(
-            "AI provider transient error (streak: {}). Globally backing off for {:.2}s",
-            count,
-            backoff.as_secs_f64()
         );
     }
 }

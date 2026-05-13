@@ -32,6 +32,7 @@ pub async fn handle_generate(
     State(state): State<Arc<ProxyState>>,
     Json(request): Json<GenerateContentRequest>,
 ) -> impl IntoResponse {
+    let mut local_transient_errors = 0;
     loop {
         // 1. Wait if globally blocked
         let _slept = state.quota_manager.wait_for_access().await;
@@ -49,10 +50,17 @@ pub async fn handle_generate(
                         continue;
                     }
                     AiErrorClass::Transient { retry_after } => {
-                        state
-                            .quota_manager
-                            .report_transient_error(retry_after)
-                            .await;
+                        local_transient_errors += 1;
+                        let backoff_secs =
+                            (1.0 * (2.0_f64.powi(local_transient_errors - 1))).min(60.0);
+                        let backoff =
+                            std::time::Duration::from_secs_f64(backoff_secs).max(retry_after);
+                        tracing::warn!(
+                            "AI provider transient error (streak: {}). Locally backing off for {:.2}s",
+                            local_transient_errors,
+                            backoff.as_secs_f64()
+                        );
+                        tokio::time::sleep(backoff).await;
                         continue;
                     }
                     AiErrorClass::Fatal => {}
