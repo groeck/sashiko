@@ -2064,6 +2064,26 @@ impl Database {
         part_index: u32,
         diff: &str,
     ) -> Result<i64> {
+        // Check if index collision occurs for this patchset
+        let collision_exists: bool = {
+            let mut rows = self
+                .conn
+                .query(
+                    "SELECT 1 FROM patches WHERE patchset_id = ? AND part_index = ? AND message_id != ?",
+                    libsql::params![patchset_id, part_index, message_id],
+                )
+                .await?;
+            rows.next().await.ok().flatten().is_some()
+        };
+
+        if collision_exists {
+            return Err(anyhow::anyhow!(
+                "Index collision: index {} already exists in patchset {}",
+                part_index,
+                patchset_id
+            ));
+        }
+
         // Check if patch exists and get old patchset_id to fix counts if we steal it
         let old_patchset_id: Option<i64> = {
             let mut rows = self
