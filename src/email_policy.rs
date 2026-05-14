@@ -41,6 +41,8 @@ pub struct SubsystemPolicy {
     pub patchwork: PatchworkPolicy,
     #[serde(default)]
     pub embargo_hours: Option<u32>,
+    #[serde(default)]
+    pub send_reviewed_by: bool,
 }
 
 impl EmailPolicyConfig {

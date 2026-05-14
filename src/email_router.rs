@@ -3,7 +3,11 @@ use std::collections::HashSet;
 
 pub enum Action {
     Mute,
-    Send { to: Vec<String>, cc: Vec<String> },
+    Send {
+        to: Vec<String>,
+        cc: Vec<String>,
+        send_reviewed_by: bool,
+    },
 }
 
 pub struct EmailRouter {}
@@ -86,6 +90,7 @@ impl EmailRouter {
         let mut is_private = false;
         let mut reply_to_author = false;
         let mut cc_individuals = false;
+        let mut send_reviewed_by = false;
         let mut cc = Vec::new();
 
         for p in active_policies {
@@ -100,6 +105,9 @@ impl EmailRouter {
             }
             if p.cc_individuals {
                 cc_individuals = true;
+            }
+            if p.send_reviewed_by {
+                send_reviewed_by = true;
             }
             for cr in &p.cc {
                 cc.push(cr.clone());
@@ -158,6 +166,7 @@ impl EmailRouter {
         Action::Send {
             to: final_to.into_iter().collect(),
             cc: final_cc.into_iter().collect(),
+            send_reviewed_by,
         }
     }
 
@@ -298,7 +307,7 @@ mod tests {
         );
 
         match action {
-            Action::Send { to, cc } => {
+            Action::Send { to, cc, .. } => {
                 assert!(to.contains(&"author@test.com".to_string()));
                 assert!(to.contains(&"linux-mm@kvack.org".to_string()));
                 assert!(cc.contains(&"maintainer@test.com".to_string()));
@@ -324,7 +333,7 @@ mod tests {
         );
 
         match action {
-            Action::Send { to, cc } => {
+            Action::Send { to, cc, .. } => {
                 assert!(to.contains(&"author@test.com".to_string()));
                 // Mailing lists should be stripped
                 assert!(!to.contains(&"linux-mm@kvack.org".to_string()));
@@ -350,7 +359,7 @@ mod tests {
         );
 
         match action {
-            Action::Send { to, cc } => {
+            Action::Send { to, cc, .. } => {
                 assert!(to.contains(&"author@test.com".to_string()));
                 assert!(to.contains(&"unknown-list@vger.kernel.org".to_string()));
                 assert!(cc.contains(&"maintainer@test.com".to_string()));
@@ -374,7 +383,7 @@ mod tests {
         );
 
         match action {
-            Action::Send { to, cc } => {
+            Action::Send { to, cc, .. } => {
                 assert!(!to.contains(&"bot@sashiko.dev".to_string()));
                 assert!(!cc.contains(&"bot@sashiko.dev".to_string()));
             }

@@ -2002,23 +2002,6 @@ impl Reviewer {
             });
         }
 
-        if findings_count == 0 {
-            info!("No issues found for patch {}, skipping email.", patch_id);
-            ctx.db
-                .insert_email_outbox(
-                    patch_id,
-                    "Skipped",
-                    "[]",
-                    "[]",
-                    "Skipped",
-                    msg_id.trim_matches(|c| c == '<' || c == '>'),
-                    msg_id.trim_matches(|c| c == '<' || c == '>'),
-                    "Skipped due to no findings",
-                )
-                .await?;
-            return Ok(());
-        }
-
         let action = EmailRouter::resolve_recipients(
             &policy,
             &to_list,
@@ -2026,6 +2009,110 @@ impl Reviewer {
             &patch_author,
             &sender_address,
         );
+
+        if findings_count == 0 {
+            let mut sent_reviewed_by = false;
+            if let EmailAction::Send {
+                to,
+                cc,
+                send_reviewed_by,
+            } = &action
+                && *send_reviewed_by
+            {
+                let mut body_head = String::new();
+                if let Some(body) = &msg_details.body {
+                    let mut commit_msg_lines = Vec::new();
+                    for line in body.lines() {
+                        if line == "---" || line.starts_with("diff --git ") {
+                            break;
+                        }
+                        commit_msg_lines.push(line);
+                    }
+
+                    let mut sob_index = None;
+                    for (i, line) in commit_msg_lines.iter().enumerate().rev() {
+                        if line.to_lowercase().starts_with("signed-off-by:") {
+                            sob_index = Some(i);
+                            break;
+                        }
+                    }
+
+                    let end_index = sob_index.unwrap_or(commit_msg_lines.len().saturating_sub(1));
+                    if !commit_msg_lines.is_empty() && end_index < commit_msg_lines.len() {
+                        let head_lines = &commit_msg_lines[0..=end_index];
+                        if head_lines.len() > 30 {
+                            let top = 15;
+                            let bottom = 5;
+                            for line in &head_lines[0..top] {
+                                body_head.push_str("> ");
+                                body_head.push_str(line);
+                                body_head.push('\n');
+                            }
+                            body_head.push_str("> [ ... ]\n");
+                            for line in &head_lines
+                                [head_lines.len().saturating_sub(bottom)..head_lines.len()]
+                            {
+                                body_head.push_str("> ");
+                                body_head.push_str(line);
+                                body_head.push('\n');
+                            }
+                        } else {
+                            for line in head_lines {
+                                body_head.push_str("> ");
+                                body_head.push_str(line);
+                                body_head.push('\n');
+                            }
+                        }
+                    }
+                }
+
+                if !body_head.is_empty() {
+                    let to_json = serde_json::to_string(&to).unwrap_or_else(|_| "[]".to_string());
+                    let cc_json = serde_json::to_string(&cc).unwrap_or_else(|_| "[]".to_string());
+                    let subject_prefix = if patch_subject.to_lowercase().starts_with("re:") {
+                        ""
+                    } else {
+                        "Re: "
+                    };
+                    let final_subject = format!("{}{}", subject_prefix, patch_subject);
+                    let final_body = format!(
+                        "{}\nReviewed-by: Sashiko <sashiko-bot@kernel.org>\n",
+                        body_head
+                    );
+
+                    ctx.db
+                        .insert_email_outbox(
+                            patch_id,
+                            "Pending",
+                            &to_json,
+                            &cc_json,
+                            &final_subject,
+                            msg_id.trim_matches(|c| c == '<' || c == '>'),
+                            msg_id.trim_matches(|c| c == '<' || c == '>'),
+                            &final_body,
+                        )
+                        .await?;
+                    sent_reviewed_by = true;
+                }
+            }
+
+            if !sent_reviewed_by {
+                info!("No issues found for patch {}, skipping email.", patch_id);
+                ctx.db
+                    .insert_email_outbox(
+                        patch_id,
+                        "Skipped",
+                        "[]",
+                        "[]",
+                        "Skipped",
+                        msg_id.trim_matches(|c| c == '<' || c == '>'),
+                        msg_id.trim_matches(|c| c == '<' || c == '>'),
+                        "Skipped due to no findings",
+                    )
+                    .await?;
+            }
+            return Ok(());
+        }
 
         match action {
             EmailAction::Mute => {
@@ -2043,7 +2130,7 @@ impl Reviewer {
                     )
                     .await?;
             }
-            EmailAction::Send { to, cc } => {
+            EmailAction::Send { to, cc, .. } => {
                 let to_json = serde_json::to_string(&to)?;
                 let cc_json = serde_json::to_string(&cc)?;
 
