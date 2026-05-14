@@ -1632,13 +1632,41 @@ impl Database {
             let mut rows = self
                 .conn
                 .query(
-                    "SELECT id, date, author, subject, subject_index, total_parts FROM patchsets WHERE cover_letter_message_id = ?",
+                    "SELECT id, date, author, subject, subject_index, total_parts, status FROM patchsets WHERE cover_letter_message_id = ?",
                     libsql::params![clid.clone()],
                 )
                 .await?;
-            if let Ok(Some(row)) = rows.next().await {
-                // Found it! Use this ID. We'll update its fields below.
+            while let Ok(Some(row)) = rows.next().await {
                 let id: i64 = row.get(0)?;
+                let existing_subject: String = row.get(3)?;
+                let existing_status: String = row.get(6).unwrap_or_else(|_| "Unknown".to_string());
+
+                let is_placeholder =
+                    existing_subject == "(placeholder)" || existing_status == "Fetching";
+
+                let existing_version = crate::patch::parse_subject_version(&existing_subject);
+                let v_new = version.unwrap_or(1);
+                let v_old = existing_version.unwrap_or(1);
+                let versions_compatible = v_new == v_old;
+
+                let index_collision = if part_index == 0 {
+                    false
+                } else {
+                    let mut p_rows = self
+                        .conn
+                        .query(
+                            "SELECT 1 FROM patches WHERE patchset_id = ? AND part_index = ? AND message_id != ?",
+                            libsql::params![id, part_index, message_id],
+                        )
+                        .await?;
+                    p_rows.next().await.ok().flatten().is_some()
+                };
+
+                if index_collision || (!is_placeholder && !versions_compatible) {
+                    continue;
+                }
+
+                // Found it! Use this ID. We'll update its fields below.
                 let subject_index: u32 = row.get(4).unwrap_or(9999);
                 let existing_total: u32 = row.get(5).unwrap_or(1);
 
