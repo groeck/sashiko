@@ -19,8 +19,8 @@
   `devm_hwmon_device_register_with_info()` to register with the
   hardware monitoring subsystem.
 
-- The hardware monitoring subsystem core serializes sysfs operations
-  for attributes registered with the `info` parameter of
+- The hardware monitoring subsystem core serializes thermal subsystem and
+  sysfs operations for attributes registered with the `info` parameter of
   `hwmon_device_register_with_info()` and
   `devm_hwmon_device_register_with_info()`.
   Drivers must implement locking required for interrupt handling and for
